@@ -1,1 +1,1 @@
-# Tests for Ollama Vision MCP Server
+"""Tests for Percival Vision MCP Server."""

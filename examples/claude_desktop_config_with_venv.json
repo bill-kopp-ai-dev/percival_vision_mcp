@@ -1,39 +1,24 @@
 {
   "mcpServers": {
-    "ollama-vision": {
-      "comment": "Example configuration for Claude Desktop - choose one of the following",
-      
-      "_with_virtual_environment": {
-        "command": "C:\\Users\\YOUR_USERNAME\\path\\to\\ollama-vision-mcp\\venv\\Scripts\\python.exe",
-        "args": ["-m", "src.server"],
-        "cwd": "C:\\Users\\YOUR_USERNAME\\path\\to\\ollama-vision-mcp",
-        "env": {
-          "OLLAMA_VISION_DEFAULT_MODEL": "llava-phi3",
-          "OLLAMA_VISION_LOG_LEVEL": "INFO",
-          "OLLAMA_VISION_TIMEOUT": "120"
-        }
-      },
-      
-      "_without_virtual_environment": {
-        "command": "python",
-        "args": ["-m", "src.server"],
-        "cwd": "C:\\Users\\YOUR_USERNAME\\path\\to\\ollama-vision-mcp",
-        "env": {
-          "OLLAMA_VISION_DEFAULT_MODEL": "llava-phi3",
-          "OLLAMA_VISION_LOG_LEVEL": "INFO",
-          "OLLAMA_VISION_TIMEOUT": "120"
-        }
-      },
-      
-      "_actual_config_use_this": {
-        "command": "C:\\Users\\YOUR_USERNAME\\path\\to\\ollama-vision-mcp\\venv\\Scripts\\python.exe",
-        "args": ["-m", "src.server"],
-        "cwd": "C:\\Users\\YOUR_USERNAME\\path\\to\\ollama-vision-mcp",
-        "env": {
-          "OLLAMA_VISION_DEFAULT_MODEL": "llava-phi3",
-          "OLLAMA_VISION_LOG_LEVEL": "INFO",
-          "OLLAMA_VISION_TIMEOUT": "120"
-        }
+    "percival-vision": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--no-sync",
+        "--directory",
+        "/absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp",
+        "python",
+        "main.py",
+        "--mode",
+        "stdio"
+      ],
+      "env": {
+        "UV_PROJECT_ENVIRONMENT": "/absolute/path/to/percival.OS_Dev/.venv",
+        "PERCIVAL_API_KEY": "your-api-key-here",
+        "PERCIVAL_BASE_URL": "https://api.venice.ai/api/v1",
+        "PERCIVAL_DEFAULT_MODEL": "qwen-2.5-vl",
+        "PERCIVAL_VISION_MCP_ALLOWED_ROOTS": "/absolute/path/to/percival.OS_Dev",
+        "PERCIVAL_VISION_MCP_WORKING_DIR_MODE": "compat"
       }
     }
   }

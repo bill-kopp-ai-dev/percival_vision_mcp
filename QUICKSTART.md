@@ -1,110 +1,68 @@
-# Quick Start Guide
+# Quick Start
 
-## 🚀 5-Minute Setup
-
-### 1. Install Ollama (if not already installed)
-
-**Windows**: Download from https://ollama.ai/download/windows
-
-**macOS/Linux**:
-```bash
-# macOS
-brew install ollama
-
-# Linux
-curl -fsSL https://ollama.ai/install.sh | sh
-```
-
-### 2. Start Ollama & Get Vision Model
+## 1) Instalar dependências com uv
 
 ```bash
-# Terminal 1: Start Ollama
-ollama serve
-
-# Terminal 2: Pull vision model
-ollama pull llava-phi3
+cd /absolute/path/to/percival.OS_Dev
+export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
+uv sync --directory mcp_servers/percival_vision_mcp
 ```
 
-### 3. Install Ollama Vision MCP
+## 2) Definir variáveis de ambiente
 
 ```bash
-# Navigate to the project directory
-cd C:\Users\ekirjad\MCP\ollama-vision-mcp
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-
-# Install the package
-pip install -e .
-# Or just install requirements
-pip install -r requirements.txt
+export PERCIVAL_API_KEY="your-api-key"
+export PERCIVAL_BASE_URL="https://api.venice.ai/api/v1"
+export PERCIVAL_DEFAULT_MODEL="qwen-2.5-vl"
+export PERCIVAL_VISION_MCP_ALLOWED_ROOTS="/absolute/path/to/percival.OS_Dev"
+export PERCIVAL_VISION_MCP_WORKING_DIR_MODE="compat"
+export PERCIVAL_VISION_MCP_ALLOW_PRIVATE_PROVIDER_URL="false"
+export PERCIVAL_VISION_MCP_ALLOW_INSECURE_PROVIDER_URL="false"
+export PERCIVAL_VISION_MCP_ALLOW_SECURITY_METRICS_CLEAR="false"
+export PERCIVAL_VISION_MCP_EXPOSE_SECURITY_EVENT_DETAILS="false"
+export PERCIVAL_VISION_MCP_ENABLE_PERSISTENT_SECURITY_AUDIT="false"
+export PERCIVAL_VISION_MCP_ENABLED_TOOLS=""
+export PERCIVAL_VISION_MCP_DISABLED_TOOLS=""
 ```
 
-### 4. Test Installation
+Aliases legados compatíveis:
+- API key: `JARVINA_API_KEY`, `VENICE_API_KEY`, `OPENAI_API_KEY`
+- Base URL: `JARVINA_BASE_URL`
+- Modelo default: `JARVINA_VISION_MODEL`
+
+## 3) Rodar em stdio (modo recomendado para nanobot)
 
 ```bash
-cd C:\My_Files\ollama-vision-mcp
-python tests/test_server.py
+uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode stdio
 ```
 
-### 5. Configure Claude Desktop
+## 4) Validar profile de integração
 
-Add to `%APPDATA%\Claude\claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "ollama-vision": {
-      "command": "C:\\Users\\ekirjad\\MCP\\ollama-vision-mcp\\venv\\Scripts\\python.exe",
-      "args": ["-m", "src.server"],
-      "cwd": "C:\\Users\\ekirjad\\MCP\\ollama-vision-mcp"
-    }
-  }
-}
-```
-
-**Note**: If you installed without virtual environment, use `"command": "python"` instead.
-
-### 6. Restart Claude Desktop
-
-Close and reopen Claude Desktop to load the new server.
-
-### 7. Test It!
-
-Try these commands in Claude:
-- "Describe the image at C:/path/to/your/image.jpg"
-- "What objects are in this image: C:/path/to/photo.png"
-- "Read the text from C:/path/to/document.png"
-
-## ✅ Success Indicators
-
-You'll know it's working when:
-1. `ollama list` shows llava-phi3
-2. Test script shows all green checkmarks
-3. Claude can analyze your images
-
-## 🔧 Troubleshooting
-
-**"Cannot connect to Ollama"**
 ```bash
-# Make sure Ollama is running
-ollama serve
+uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --print-profile
 ```
 
-**"No vision models found"**
+HTTP (SSE/streamable-http) exige token por padrão, inclusive em loopback:
+
 ```bash
-# Pull the model
-ollama pull llava-phi3
+PERCIVAL_VISION_MCP_AUTH_TOKEN="change-me" uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode sse --host 127.0.0.1 --port 8001
 ```
 
-**"Module not found"**
+## 5) Rodar testes
+
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp pytest -q
 ```
+
+## 6) Validar rollout controlado
+
+Canary em modo estrito:
+
+```bash
+PERCIVAL_VISION_MCP_WORKING_DIR_MODE=strict uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode stdio
+```
+
+Checklist rápido:
+- `get_rollout_status` retorna `working_dir_mode=strict` no canary.
+- clientes legados sem `working_dir` falham com `code=missing_working_dir`.
+- `get_security_metrics` mostra queda de `compat_working_dir_derived`.

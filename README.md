@@ -1,166 +1,235 @@
-# 👁️ Percival Vision MCP Server
+# Percival Vision MCP Server
 
-**Percival** is a provider-agnostic [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Computer Vision and Image Analysis. It was designed to break free from local model constraints and adopt the universal industry standard (OpenAI Vision / Chat Completions), integrating natively with cloud providers like **Venice.ai** — acting as the "eyes" of the [nanobot](https://github.com/HKUDS/nanobot) autonomous agent ecosystem within [percival.OS](https://github.com/bill-kopp-ai-dev/percival.OS_Dev).
+Servidor MCP de visão computacional provider-agnostic, padronizado com FastMCP e contrato estruturado para uso com nanobot.
 
----
+Contrato atual: `2026-03-s9`.
 
-## 🙏 Credits & Original Repository
+## Status da Refatoração
 
-This project is a deeply refactored fork of **[ollama-vision-mcp](https://github.com/xkiranj/ollama-vision-mcp)**, originally created by **xkiranj**.
+- Fase 0: Baseline e congelamento concluída (`docs/refactor/`).
+- Fase 1: Estrutura padrão FastMCP concluída (`main.py` + `server.py`).
+- Fase 2: Contrato para nanobot concluída (respostas estruturadas + `get_nanobot_profile`).
+- Fase 3: Segurança e Governança de I/O concluída (sandbox de path, sanitização e métricas).
+- Fase 4: Cliente de provedor e configuração unificada concluída (`utils/runtime_config.py` + cliente unificado).
+- Fase 5: Paridade funcional e compatibilidade concluída (modo compatível sem `working_dir` explícito).
+- Fase 6: Testes, docs e exemplos concluída (matriz ampliada + guias de operação).
+- Fase 7: Rollout controlado concluída (modo `compat|strict` + telemetria de migração).
+- Hardening de Segurança P0, P1 e P2 concluído.
+- Limpeza pós-refatoração concluída (remoção de shims legados em `src/` e artefatos locais temporários).
 
-The semantic tool architecture (`read_text`, `identify_objects`, `describe_image`) was inherited from the original project. Our refactoring focused on **portability**: we removed the strict dependency on local Ollama infrastructure and rebuilt the inference engine to accept any cloud or local API that complies with the multimodal Chat Completions standard.
+## Estrutura atual
 
----
+- entrypoint CLI: `main.py`
+- configuração FastMCP: `server.py`
+- tools MCP: `tools/vision_tools.py`
+- utilitários compartilhados: `utils/`
+- testes: `tests/`
 
-## 🛠️ What Changed? (Refactoring Details)
+## Tools disponíveis
 
-The following architectural changes were made to transform `ollama-vision-mcp` into **Percival**:
+- `list_available_vision_models`
+- `analyze_image`
+- `describe_image`
+- `identify_objects`
+- `read_text`
+- `get_nanobot_profile`
+- `get_security_metrics`
+- `clear_security_metrics`
+- `get_security_posture`
+- `get_rollout_status`
+- `get_access_policy_status`
 
-### 1. New Connection Engine (Core Decoupling)
+## Contrato de Resposta
 
-The original project made direct HTTP calls to `localhost:11434` or used the Ollama local library.
+Todas as tools retornam JSON compacto com envelope:
 
-- **Change:** Replaced the local engine with the official `openai` SDK used as an agnostic bridge. Added `PERCIVAL_BASE_URL` and `PERCIVAL_API_KEY` environment variables with a fail-fast validation at startup.
-- **Benefit:** The server can now process images using state-of-the-art hosted models on Venice.ai, Groq, OpenAI, or any compatible API, without changing any tool logic.
+- sucesso: `ok=true`, `data`, `meta`, `request_id`, `legacy_text` (opcional)
+- erro: `ok=false`, `error`, `code`, `details` (opcional), `meta`, `request_id`, `legacy_text` (opcional)
 
-### 2. Standard Vision Payload (`encode_image_for_vision`)
+`meta` inclui: `server`, `contract_version`, `timestamp`, `tool`.
 
-Ollama accepted images as plain base64 string arrays. The industry-standard API requires a strict multimodal format.
+## Segurança e Governança de I/O (Fase 3)
 
-- **Change:** Created a universal helper (`encode_image_for_vision`) that reads local files, detects the MIME type (`image/jpeg`, `image/png`, etc.) and builds the correct multimodal payload using Data URIs (`data:image/ext;base64,...`), then sends them via the `image_url` content block.
-- **Benefit:** Eliminates `Bad Request` errors from cloud providers and ensures that images are correctly processed as part of a Chat Completions conversation.
+Para tools de análise (`analyze_image`, `describe_image`, `identify_objects`, `read_text`):
 
-### 3. Intelligent Model Discovery (Agent Autonomy)
+- `working_dir` é recomendado.
+- `image_path` deve resolver dentro de `working_dir`.
+- `working_dir` deve estar dentro de roots permitidas (`PERCIVAL_VISION_MCP_ALLOWED_ROOTS`) quando sandbox estiver habilitado.
+- saída do modelo é tratada como dado não confiável e passa por sanitização contra padrões de prompt-injection.
+- eventos de segurança são registrados em memória.
+- compatibilidade legada: se `working_dir` não for enviado, o servidor deriva com segurança (`parent` de `image_path` absoluto ou `cwd`).
 
-Since Percival now targets providers with dozens of models — most of them text-only — there was a risk of the agent sending images to incompatible models.
-
-- **Change:** Added the `list_available_vision_models` tool, which queries the provider's `/v1/models` endpoint and applies a keyword heuristic (`vision`, `vl`, `llava`, `pixtral`, `qwen`) to filter and recommend only vision-capable models.
-- **Benefit:** Gives full autonomy to the LLM orchestrator (e.g. nanobot) to discover and select the correct vision model before making inference calls.
-
-### 4. Infrastructure Cleanup & Renaming
-
-- **Change:** Removed legacy setup scripts (`setup.bat`, `setup.sh`, `setup.py`) and centralized package management in `pyproject.toml` using `uv`. Server class renamed from `OllamaVisionServer` to `PercivalVisionServer`. Configuration extracted to a dedicated `src/config.py` with environment-aware defaults.
-
----
-
-## 🔌 MCP Tools
-
-| Tool | Description |
-|---|---|
-| `list_available_vision_models` | Queries the provider and returns a filtered list of vision-capable models. **Call this first** if the model is unknown. |
-| `analyze_image` | Analyze an image based on a custom user-provided prompt |
-| `describe_image` | Generate a comprehensive general description of an image |
-| `identify_objects` | Identify and list all distinct objects present in an image |
-| `read_text` | Extract all visible text from an image (OCR capability) |
-
----
-
-## 🚀 Requirements
+## Requisitos
 
 - Python 3.10+
-- [`uv`](https://github.com/astral-sh/uv) package manager
+- `uv`
 
----
-
-## 📦 Installation
+## Instalação
 
 ```bash
-git clone https://github.com/bill-kopp-ai-dev/percival_vision_mcp.git
-cd percival_vision_mcp
-uv sync
+cd /absolute/path/to/percival.OS_Dev
+export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
+uv sync --directory mcp_servers/percival_vision_mcp
 ```
 
----
+## Execução
 
-## ▶️ Running
+Stdio (padrão):
 
 ```bash
-uv run src/server.py
+export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
+uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode stdio
 ```
 
-Or via the installed script entry point:
+SSE / Streamable HTTP:
 
 ```bash
-percival-vision
+export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
+PERCIVAL_VISION_MCP_AUTH_TOKEN=change-me uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode sse --host 127.0.0.1 --port 8001
+PERCIVAL_VISION_MCP_AUTH_TOKEN=change-me uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode streamable-http --host 127.0.0.1 --port 8001 --stateless-http
 ```
 
----
+Imprimir profile de integração:
 
-## ⚙️ Configuration
+```bash
+export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
+uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --print-profile
+```
 
-Percival is configured exclusively via environment variables:
+## Variáveis de ambiente
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `PERCIVAL_API_KEY` | ✅ | — | API key for the provider (fail-fast if missing) |
-| `PERCIVAL_BASE_URL` | ❌ | `https://api.openai.com/v1` | Base URL for the OpenAI-compatible API endpoint |
-| `PERCIVAL_DEFAULT_MODEL` | ❌ | `qwen32b-vision` | Default vision model to use when none is specified |
-| `PERCIVAL_LOG_LEVEL` | ❌ | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `PERCIVAL_TIMEOUT` | ❌ | `120` | Request timeout in seconds |
+Configuração de provedor:
 
----
+- `PERCIVAL_API_KEY` (primária; fallback: `JARVINA_API_KEY`, `VENICE_API_KEY`, `OPENAI_API_KEY`)
+- `PERCIVAL_BASE_URL` (primária; fallback: `JARVINA_BASE_URL`; default: `https://api.openai.com/v1`)
+- `PERCIVAL_DEFAULT_MODEL` (primária; fallback: `JARVINA_VISION_MODEL`; default: `qwen-2.5-vl`)
+- `PERCIVAL_TIMEOUT` (default: `120`)
+- `PERCIVAL_VISION_MCP_MAX_TOKENS` (default: `1000`)
+- `PERCIVAL_VISION_MCP_MODEL_CACHE_TTL` (default: `300`)
 
-## 🤖 Integrating with nanobot / Claude Desktop
+Segurança e I/O:
 
-Add the following entry to your agent's `config.json`:
+- `PERCIVAL_VISION_MCP_ALLOWED_ROOTS` (lista CSV de roots absolutos permitidos para `working_dir`)
+- `PERCIVAL_VISION_MCP_DISABLE_ROOT_SANDBOX` (default: `false`)
+- `PERCIVAL_VISION_MCP_MAX_ANALYSIS_PROMPT_CHARS` (default: `4000`)
+- `PERCIVAL_VISION_MCP_MAX_OUTPUT_CHARS` (default: `8000`)
+- `PERCIVAL_VISION_MCP_MAX_IMAGE_BYTES` (default: `20971520`)
+- `PERCIVAL_VISION_MCP_MAX_IMAGE_PIXELS` (default: `40000000`)
+- `PERCIVAL_VISION_MCP_ALLOWED_IMAGE_MIME_TYPES` (CSV; default seguro interno)
+- `PERCIVAL_VISION_MCP_ALLOW_INSECURE_PROVIDER_URL` (default: `false`)
+- `PERCIVAL_VISION_MCP_ALLOW_PRIVATE_PROVIDER_URL` (default: `false`)
+- `PERCIVAL_VISION_MCP_ALLOWED_PROVIDER_HOSTS` (CSV opcional de allowlist)
+- `PERCIVAL_VISION_MCP_DISABLE_SYSTEM_GUARDRAIL` (default: `false`)
+- `PERCIVAL_VISION_MCP_SYSTEM_GUARDRAIL_PROMPT` (override opcional do guardrail de sistema)
+- `PERCIVAL_VISION_MCP_ENABLE_PERSISTENT_SECURITY_AUDIT` (default: `false`)
+- `PERCIVAL_VISION_MCP_SECURITY_AUDIT_LOG_PATH` (default: `.percival_vision_security_audit.jsonl`)
+- `PERCIVAL_VISION_MCP_SECURITY_AUDIT_MAX_BYTES` (default: `5242880`)
+
+Runtime FastMCP:
+
+- `PERCIVAL_VISION_MCP_MODE` (`stdio|sse|streamable-http`, default: `stdio`)
+- `PERCIVAL_VISION_MCP_HOST` (default: `127.0.0.1`)
+- `PERCIVAL_VISION_MCP_PORT` (default: `8001`)
+- `PERCIVAL_VISION_MCP_LOG_LEVEL` (default: `INFO`)
+- `PERCIVAL_VISION_MCP_AUTH_TOKEN` (recomendado para HTTP)
+- `PERCIVAL_VISION_MCP_ALLOW_REMOTE_HTTP` (default: `false`)
+- `PERCIVAL_VISION_MCP_ALLOW_UNAUTHENTICATED_LOOPBACK_HTTP` (default: `false`, inseguro)
+- `PERCIVAL_VISION_MCP_WORKING_DIR_MODE` (`compat|strict`, default: `compat`)
+- `PERCIVAL_VISION_MCP_STRICT_WORKING_DIR_DATE` (default: `2026-06-30`)
+- `PERCIVAL_VISION_MCP_EMIT_COMPAT_WARNINGS` (default: `true`)
+- `PERCIVAL_VISION_MCP_ROLLOUT_TRACK` (default: `stable`)
+- `PERCIVAL_VISION_MCP_ALLOW_SECURITY_METRICS_CLEAR` (default: `false`)
+- `PERCIVAL_VISION_MCP_EXPOSE_SECURITY_EVENT_DETAILS` (default: `false`)
+- `PERCIVAL_VISION_MCP_ENABLED_TOOLS` (CSV de allowlist opcional)
+- `PERCIVAL_VISION_MCP_DISABLED_TOOLS` (CSV de denylist opcional)
+- `PERCIVAL_VISION_MCP_ALWAYS_ALLOWED_TOOLS` (CSV adicional para tools sempre liberadas)
+
+## Integração com nanobot
+
+Exemplo para `~/.nanobot/config.json`:
 
 ```json
 "percival-vision": {
-  "command": "/path/to/.venv/bin/python",
-  "args": ["-m", "src.server"],
+  "command": "uv",
+  "args": [
+    "run",
+    "--no-sync",
+    "--directory",
+    "/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp",
+    "python",
+    "main.py",
+    "--mode",
+    "stdio"
+  ],
+  "enabledTools": [
+    "list_available_vision_models",
+    "analyze_image",
+    "describe_image",
+    "identify_objects",
+    "read_text",
+    "get_nanobot_profile",
+    "get_security_metrics",
+    "clear_security_metrics",
+    "get_security_posture",
+    "get_rollout_status",
+    "get_access_policy_status"
+  ],
+  "toolTimeout": 45,
   "env": {
-    "PYTHONPATH": "/path/to/percival_vision_mcp",
+    "UV_PROJECT_ENVIRONMENT": "/absolute/path/to/percival.OS_Dev/.venv",
     "PERCIVAL_API_KEY": "your-api-key-here",
     "PERCIVAL_BASE_URL": "https://api.venice.ai/api/v1",
-    "PERCIVAL_DEFAULT_MODEL": "qwen-2.5-vl"
+    "PERCIVAL_DEFAULT_MODEL": "qwen-2.5-vl",
+    "PERCIVAL_VISION_MCP_ALLOWED_ROOTS": "/absolute/path/to/percival.OS_Dev"
   }
 }
 ```
 
-### Example Usage
+### Exemplo de chamada de tool (modo recomendado)
 
-```
-User: What does this screenshot say?
-
-Agent: [calls list_available_vision_models to find a vision-capable model]
-       [calls read_text with the screenshot path and detected model]
-       → Returns all extracted text from the image
-
-User: Now describe what's shown in the UI.
-
-Agent: [calls describe_image with the same path]
-       → Returns a detailed description of the interface elements
+```json
+{
+  "working_dir": "/absolute/path/to/percival.OS_Dev",
+  "image_path": "assets/screenshot.png"
+}
 ```
 
----
+### Exemplo de chamada em modo compatível legado
 
-## 📁 Project Structure
-
-```
-percival_vision_mcp/
-├── pyproject.toml           # Project metadata, dependencies & script entry point
-├── src/
-│   ├── config.py            # Environment-aware configuration manager
-│   └── server.py            # PercivalVisionServer: MCP tools, vision payload handler, inference engine
-├── examples/
-│   ├── claude_desktop_config.json         # Claude Desktop integration example
-│   └── usage_examples.py                  # Usage code samples
-├── tests/
-│   └── test_server.py       # Server tests
-└── docs/
-    └── WINDOWS_INSTALL.md   # Windows-specific installation guide
+```json
+{
+  "image_path": "assets/screenshot.png"
+}
 ```
 
----
+## Testes
 
-## 📖 Attribution
+```bash
+export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
+uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp pytest -q
+```
 
-This project is built upon the work of:
+Cobertura de regressão inclui:
+- contrato estruturado e `contract_version`;
+- sanitização de saída não confiável;
+- sandbox de path;
+- compatibilidade legada sem `working_dir`;
+- rollout `compat|strict` e status operacional.
+- políticas de egress e autenticação HTTP padrão estritas.
+- proteção de telemetria (detalhes ocultos por padrão).
 
-- **[xkiranj/ollama-vision-mcp](https://github.com/xkiranj/ollama-vision-mcp)** — The direct upstream project, providing the original semantic vision tool architecture.
+## Rollout Controlado (Fase 7)
 
----
+Estratégia recomendada:
+1. `stable/compat` (default): aceitar chamadas legadas sem `working_dir` e monitorar eventos `compat_working_dir_derived`.
+2. `canary/strict` (staging): ativar `PERCIVAL_VISION_MCP_WORKING_DIR_MODE=strict` e corrigir clientes restantes.
+3. produção em `strict`: bloquear ausência de `working_dir` com erro `missing_working_dir`.
 
-## 📄 License
+Tool de apoio operacional:
+- `get_rollout_status`: mostra track, modo efetivo e data alvo para migração.
+- `get_security_metrics`: permite confirmar redução de tráfego em modo compatível.
 
-This project maintains the MIT License from the original repository. See [LICENSE](LICENSE) for details.
+## Compatibilidade temporária
+
+- Nomes das 5 tools legadas de visão foram preservados:
+  `list_available_vision_models`, `analyze_image`, `describe_image`, `identify_objects`, `read_text`.

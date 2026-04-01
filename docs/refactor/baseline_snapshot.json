@@ -1,0 +1,20 @@
+{
+  "frozen_at": "2026-03-31",
+  "server": "percival-vision-mcp",
+  "legacy_tools": [
+    "list_available_vision_models",
+    "analyze_image",
+    "describe_image",
+    "identify_objects",
+    "read_text"
+  ],
+  "target_phases": [
+    "Fase 1: Estrutura Padrao FastMCP",
+    "Fase 2: Contrato para Nanobot"
+  ],
+  "compatibility_constraints": {
+    "preserve_legacy_tool_names": true,
+    "legacy_entrypoint_shim": "python -m src.server",
+    "preferred_entrypoint": "python main.py --mode stdio"
+  }
+}
