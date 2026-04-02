@@ -18,6 +18,15 @@ from .security_utils import (
     record_security_event,
     sanitize_untrusted_text,
 )
+from .vision_model_catalog import (
+    ModelCatalogError,
+    find_alternatives,
+    get_catalog_metadata,
+    get_model_card,
+    list_model_cards,
+    load_catalog,
+    normalize_task_type,
+)
 
 __all__ = [
     "error_response",
@@ -44,4 +53,11 @@ __all__ = [
     "get_security_metrics_snapshot",
     "record_security_event",
     "sanitize_untrusted_text",
+    "ModelCatalogError",
+    "load_catalog",
+    "list_model_cards",
+    "get_model_card",
+    "find_alternatives",
+    "get_catalog_metadata",
+    "normalize_task_type",
 ]

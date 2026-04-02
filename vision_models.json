@@ -1,0 +1,126 @@
+{
+  "schema_version": "1.0",
+  "provider": "venice.ai",
+  "catalog_version": "2026-04-01",
+  "category": "vision_models",
+  "description": "Cost-effective vision-language models for multimodal tasks.",
+  "vision_models": [
+    {
+      "id": "e2ee-qwen3-vl-30b-a3b-p",
+      "name": "Qwen 3 VL 30B (E2EE)",
+      "developer": "Alibaba Cloud",
+      "description": "End-to-end encrypted vision-language model optimized for private visual reasoning and document analysis.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "e2ee"
+      },
+      "cost_estimation": "low",
+      "recommended_use_cases": ["private_document_qa", "secure_image_analysis"]
+    },
+    {
+      "id": "qwen-2.5-vl",
+      "name": "Qwen 2.5 VL",
+      "developer": "Alibaba Cloud",
+      "description": "Stable multimodal model for general image understanding, OCR and visual QA workloads.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "standard"
+      },
+      "cost_estimation": "low",
+      "recommended_use_cases": ["general_image_captioning", "web_scraping_vision", "private_document_qa"]
+    },
+    {
+      "id": "openai-gpt-4o-mini-2024-07-18",
+      "name": "GPT-4o Mini",
+      "developer": "OpenAI",
+      "description": "Lightweight, highly cost-effective multimodal model with excellent general-purpose vision capabilities.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "standard"
+      },
+      "cost_estimation": "low",
+      "recommended_use_cases": ["web_scraping_vision", "general_image_captioning"]
+    },
+    {
+      "id": "qwen3-vl-235b-a22b",
+      "name": "Qwen 3 VL 235B",
+      "developer": "Alibaba Cloud",
+      "description": "Large-scale vision-language model for complex image analysis, dense text recognition, and high-resolution understanding.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "standard"
+      },
+      "cost_estimation": "moderate",
+      "recommended_use_cases": ["complex_chart_analysis", "high_res_visual_reasoning"]
+    },
+    {
+      "id": "google-gemma-3-27b-it",
+      "name": "Gemma 3 27B IT",
+      "developer": "Google",
+      "description": "Google's open-weights multimodal model, instruction-tuned for precise visual question answering and safe spatial reasoning.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "standard"
+      },
+      "cost_estimation": "low",
+      "recommended_use_cases": ["instruction_following", "spatial_awareness_tasks"]
+    },
+    {
+      "id": "qwen3-5-35b-a3b",
+      "name": "Qwen 3.5 35B",
+      "developer": "Alibaba Cloud",
+      "description": "Highly efficient mid-sized multimodal model balancing inference speed and robust visual reasoning.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "standard"
+      },
+      "cost_estimation": "low",
+      "recommended_use_cases": ["fast_image_tagging", "multimodal_chatbots"]
+    },
+    {
+      "id": "kimi-k2-5",
+      "name": "Kimi K2.5",
+      "developer": "Moonshot AI",
+      "description": "Advanced multimodal model known for excellent context retention and precise visual feature extraction over long conversations.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "standard"
+      },
+      "cost_estimation": "moderate",
+      "recommended_use_cases": ["long_context_multimodal", "video_frame_analysis"]
+    },
+    {
+      "id": "gemini-3-flash-preview",
+      "name": "Gemini 3 Flash Preview",
+      "developer": "Google",
+      "description": "Fast and lightweight multimodal model designed for high-frequency vision tasks, real-time processing, and multimodal efficiency.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "standard"
+      },
+      "cost_estimation": "low",
+      "recommended_use_cases": ["real_time_vision_apps", "high_volume_processing"]
+    },
+    {
+      "id": "grok-41-fast",
+      "name": "Grok 4.1 Fast",
+      "developer": "xAI",
+      "description": "High-speed multimodal model optimized for rapid visual analysis, data extraction, and dynamic contextual understanding.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "standard"
+      },
+      "cost_estimation": "low",
+      "recommended_use_cases": ["real_time_data_parsing", "fast_visual_feedback"]
+    }
+  ]
+}

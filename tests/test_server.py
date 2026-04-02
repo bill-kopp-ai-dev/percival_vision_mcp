@@ -21,6 +21,29 @@ from utils.runtime_config import load_provider_runtime_config  # noqa: E402
 from utils.security_utils import reset_security_metrics_for_tests  # noqa: E402
 
 
+class _EnvOverride:
+    def __init__(self, updates: dict[str, str | None]) -> None:
+        self._updates = updates
+        self._original: dict[str, str | None] = {}
+
+    def __enter__(self):
+        for key, value in self._updates.items():
+            self._original[key] = os.environ.get(key)
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        for key, original in self._original.items():
+            if original is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original
+        return False
+
+
 class TestRuntimeAndContract(unittest.TestCase):
     def setUp(self) -> None:
         reset_security_metrics_for_tests()
@@ -86,6 +109,7 @@ class TestRuntimeAndContract(unittest.TestCase):
             sample.write_bytes(b"sample-bytes")
 
             original = vision_tools.run_vision_completion
+            original_list_models = vision_tools.list_models
 
             def fake_run_vision_completion(*, image_path: str, prompt: str, model: str | None, max_tokens: int | None):
                 return {
@@ -95,18 +119,24 @@ class TestRuntimeAndContract(unittest.TestCase):
                     "base_url": "https://api.example.test/v1",
                 }
 
+            def fake_list_models(force_refresh: bool = False):
+                return ["openai-gpt-4o-mini-2024-07-18"], False
+
             vision_tools.run_vision_completion = fake_run_vision_completion
+            vision_tools.list_models = fake_list_models
             try:
-                payload = json.loads(
-                    vision_tools.analyze_image(
-                        image_path=str(sample),
-                        working_dir=tmp_dir,
-                        prompt="Analyze this image.",
-                        model="qwen-2.5-vl",
+                with _EnvOverride({"PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "false"}):
+                    payload = json.loads(
+                        vision_tools.analyze_image(
+                            image_path=str(sample),
+                            working_dir=tmp_dir,
+                            prompt="Analyze this image.",
+                            model="qwen-2.5-vl",
+                        )
                     )
-                )
             finally:
                 vision_tools.run_vision_completion = original
+                vision_tools.list_models = original_list_models
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["data"]["operation"], "analyze_image")
@@ -214,12 +244,271 @@ class TestRuntimeAndContract(unittest.TestCase):
         self.assertEqual(payload["data"]["operation"], "list_available_vision_models")
         self.assertGreaterEqual(payload["data"]["vision_model_count"], 1)
 
+    def test_list_vision_model_cards_contract(self) -> None:
+        payload = json.loads(
+            vision_tools.list_vision_model_cards(
+                task_type="general_vision",
+                limit=2,
+                offset=0,
+                fields="id,name",
+            )
+        )
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["operation"], "list_vision_model_cards")
+        self.assertEqual(payload["data"]["fields"], ["id", "name"])
+        self.assertLessEqual(payload["data"]["count"], 2)
+
+    def test_get_vision_model_card_contract(self) -> None:
+        payload = json.loads(
+            vision_tools.get_vision_model_card(
+                "openai-gpt-4o-mini-2024-07-18",
+                fields="id,name,cost_estimation",
+            )
+        )
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["operation"], "get_vision_model_card")
+        self.assertEqual(payload["data"]["model"]["id"], "openai-gpt-4o-mini-2024-07-18")
+
+    def test_verify_vision_model_availability_unknown_when_provider_list_not_catalog_aware(self) -> None:
+        original = vision_tools.list_models
+
+        def fake_list_models(force_refresh: bool = False):
+            return ["gpt-4.1", "deepseek-v3.2"], False
+
+        vision_tools.list_models = fake_list_models
+        try:
+            payload = json.loads(
+                vision_tools.verify_vision_model_availability(
+                    "openai-gpt-4o-mini-2024-07-18",
+                    task_type="general_vision",
+                )
+            )
+        finally:
+            vision_tools.list_models = original
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["operation"], "verify_vision_model_availability")
+        self.assertEqual(payload["data"]["availability_state"], "unknown")
+        self.assertTrue(payload["data"]["available"])
+
+    def test_recommend_vision_model_for_intent_contract(self) -> None:
+        original = vision_tools.list_models
+
+        def fake_list_models(force_refresh: bool = False):
+            return ["openai-gpt-4o-mini-2024-07-18", "qwen3-vl-235b-a22b"], False
+
+        vision_tools.list_models = fake_list_models
+        try:
+            payload = json.loads(
+                vision_tools.recommend_vision_model_for_intent(
+                    task_type="general_vision",
+                    intent="need fast real-time visual feedback for dashboard screenshots",
+                    max_results=3,
+                    verify_online=True,
+                )
+            )
+        finally:
+            vision_tools.list_models = original
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["operation"], "recommend_vision_model_for_intent")
+        self.assertGreaterEqual(payload["data"]["count"], 1)
+        candidate = payload["data"]["candidates"][0]
+        self.assertIn("model_id", candidate)
+        self.assertIn("score", candidate)
+        self.assertIn("model", candidate)
+
+    def test_strict_model_check_default_disabled_keeps_legacy_behavior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample = Path(tmp_dir) / "sample.png"
+            sample.write_bytes(b"sample-bytes")
+
+            original_run = vision_tools.run_vision_completion
+            original_list = vision_tools.list_models
+
+            def fake_run_vision_completion(*, image_path: str, prompt: str, model: str | None, max_tokens: int | None):
+                return {
+                    "text": "Simple output",
+                    "model": model or "fallback-model",
+                    "max_tokens": max_tokens or 1000,
+                    "base_url": "https://api.example.test/v1",
+                }
+
+            def fake_list_models(force_refresh: bool = False):
+                return ["openai-gpt-4o-mini-2024-07-18"], False
+
+            vision_tools.run_vision_completion = fake_run_vision_completion
+            vision_tools.list_models = fake_list_models
+            try:
+                with _EnvOverride({"PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "false"}):
+                    payload = json.loads(
+                        vision_tools.describe_image(
+                            image_path=str(sample),
+                            working_dir=tmp_dir,
+                            model="non-catalog-model",
+                        )
+                    )
+            finally:
+                vision_tools.run_vision_completion = original_run
+                vision_tools.list_models = original_list
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["model_check"]["strict_enabled"], False)
+        self.assertEqual(payload["data"]["model_check"]["effective_model"], "non-catalog-model")
+
+    def test_strict_model_check_blocks_missing_catalog_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample = Path(tmp_dir) / "sample.png"
+            sample.write_bytes(b"sample-bytes")
+
+            original_run = vision_tools.run_vision_completion
+            original_list = vision_tools.list_models
+
+            called_provider = {"value": False}
+
+            def fake_run_vision_completion(*, image_path: str, prompt: str, model: str | None, max_tokens: int | None):
+                called_provider["value"] = True
+                return {
+                    "text": "should not happen",
+                    "model": model or "fallback-model",
+                    "max_tokens": max_tokens or 1000,
+                    "base_url": "https://api.example.test/v1",
+                }
+
+            def fake_list_models(force_refresh: bool = False):
+                # Include one overlapping catalog model to force visibility=visible.
+                return ["openai-gpt-4o-mini-2024-07-18"], False
+
+            vision_tools.run_vision_completion = fake_run_vision_completion
+            vision_tools.list_models = fake_list_models
+            try:
+                with _EnvOverride({"PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "true"}):
+                    payload = json.loads(
+                        vision_tools.describe_image(
+                            image_path=str(sample),
+                            working_dir=tmp_dir,
+                            model="non-catalog-model",
+                        )
+                    )
+            finally:
+                vision_tools.run_vision_completion = original_run
+                vision_tools.list_models = original_list
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["code"], "model_not_available")
+        self.assertFalse(called_provider["value"])
+
+    def test_strict_model_check_blocks_task_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample = Path(tmp_dir) / "sample.png"
+            sample.write_bytes(b"sample-bytes")
+
+            original_list = vision_tools.list_models
+
+            def fake_list_models(force_refresh: bool = False):
+                # Visible provider inventory and includes target model.
+                return ["grok-41-fast", "openai-gpt-4o-mini-2024-07-18"], False
+
+            vision_tools.list_models = fake_list_models
+            try:
+                with _EnvOverride({"PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "true"}):
+                    payload = json.loads(
+                        vision_tools.read_text(
+                            image_path=str(sample),
+                            working_dir=tmp_dir,
+                            model="grok-41-fast",
+                        )
+                    )
+            finally:
+                vision_tools.list_models = original_list
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["code"], "model_task_mismatch")
+
+    def test_strict_model_check_allows_unknown_visibility_and_reports_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample = Path(tmp_dir) / "sample.png"
+            sample.write_bytes(b"sample-bytes")
+
+            original_run = vision_tools.run_vision_completion
+            original_list = vision_tools.list_models
+
+            def fake_run_vision_completion(*, image_path: str, prompt: str, model: str | None, max_tokens: int | None):
+                return {
+                    "text": "Simple output",
+                    "model": model or "fallback-model",
+                    "max_tokens": max_tokens or 1000,
+                    "base_url": "https://api.example.test/v1",
+                }
+
+            def fake_list_models(force_refresh: bool = False):
+                # No overlap with catalog => visibility not_visible => availability unknown.
+                return ["gpt-4.1", "deepseek-v3.2"], False
+
+            vision_tools.run_vision_completion = fake_run_vision_completion
+            vision_tools.list_models = fake_list_models
+            try:
+                with _EnvOverride({"PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "true"}):
+                    payload = json.loads(
+                        vision_tools.describe_image(
+                            image_path=str(sample),
+                            working_dir=tmp_dir,
+                            model="openai-gpt-4o-mini-2024-07-18",
+                        )
+                    )
+            finally:
+                vision_tools.run_vision_completion = original_run
+                vision_tools.list_models = original_list
+
+        self.assertTrue(payload["ok"])
+        model_check = payload["data"]["model_check"]
+        self.assertTrue(model_check["strict_enabled"])
+        self.assertEqual(model_check["availability_state"], "unknown")
+
+    def test_identify_objects_with_strict_enabled_accepts_general_vision_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sample = Path(tmp_dir) / "sample.png"
+            sample.write_bytes(b"sample-bytes")
+
+            original_run = vision_tools.run_vision_completion
+            original_list = vision_tools.list_models
+
+            def fake_run_vision_completion(*, image_path: str, prompt: str, model: str | None, max_tokens: int | None):
+                return {
+                    "text": "Objects: chair, table",
+                    "model": model or "fallback-model",
+                    "max_tokens": max_tokens or 1000,
+                    "base_url": "https://api.example.test/v1",
+                }
+
+            def fake_list_models(force_refresh: bool = False):
+                return ["qwen-2.5-vl", "openai-gpt-4o-mini-2024-07-18"], False
+
+            vision_tools.run_vision_completion = fake_run_vision_completion
+            vision_tools.list_models = fake_list_models
+            try:
+                with _EnvOverride({"PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "true"}):
+                    payload = json.loads(
+                        vision_tools.identify_objects(
+                            image_path=str(sample),
+                            working_dir=tmp_dir,
+                            model="qwen-2.5-vl",
+                        )
+                    )
+            finally:
+                vision_tools.run_vision_completion = original_run
+                vision_tools.list_models = original_list
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["model_check"]["operation_task_type"], "general_vision")
+
     def test_legacy_call_without_working_dir_derives_parent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample = Path(tmp_dir) / "sample.png"
             sample.write_bytes(b"sample-bytes")
 
             original = vision_tools.run_vision_completion
+            original_list_models = vision_tools.list_models
 
             def fake_run_vision_completion(*, image_path: str, prompt: str, model: str | None, max_tokens: int | None):
                 return {
@@ -229,16 +518,22 @@ class TestRuntimeAndContract(unittest.TestCase):
                     "base_url": "https://api.example.test/v1",
                 }
 
+            def fake_list_models(force_refresh: bool = False):
+                return ["openai-gpt-4o-mini-2024-07-18"], False
+
             vision_tools.run_vision_completion = fake_run_vision_completion
+            vision_tools.list_models = fake_list_models
             try:
-                payload = json.loads(
-                    vision_tools.describe_image(
-                        image_path=str(sample),
-                        model="qwen-2.5-vl",
+                with _EnvOverride({"PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "false"}):
+                    payload = json.loads(
+                        vision_tools.describe_image(
+                            image_path=str(sample),
+                            model="qwen-2.5-vl",
+                        )
                     )
-                )
             finally:
                 vision_tools.run_vision_completion = original
+                vision_tools.list_models = original_list_models
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["data"]["working_dir"], tmp_dir)

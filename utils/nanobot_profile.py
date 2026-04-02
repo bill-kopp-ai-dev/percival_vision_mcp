@@ -31,11 +31,16 @@ def build_nanobot_profile() -> dict[str, Any]:
                 "working_dir is optional for compatibility; when omitted the server derives it safely.",
                 "rollout mode controls when missing working_dir becomes a hard error.",
                 "security metrics details are hidden by default and clear operation is policy-gated.",
+                "strict_model_check is env-gated and defaults to enabled after stabilization.",
             ],
         },
         "recommended_workflows": {
             "vision_analysis": [
-                "list_available_vision_models()",
+                "recommend_vision_model_for_intent(task_type='general_vision', intent='<goal>')",
+                "list_vision_model_cards(task_type='general_vision')",
+                "get_vision_model_card(model_id) [optional]",
+                "verify_vision_model_availability(model_id, task_type='general_vision')",
+                "list_available_vision_models() [optional provider inventory]",
                 "describe_image(working_dir=..., image_path=...) or analyze_image(...)",
                 "identify_objects(...) or read_text(...) when needed",
                 "get_rollout_status() [optional for deployment checks]",
@@ -45,6 +50,10 @@ def build_nanobot_profile() -> dict[str, Any]:
             ]
         },
         "recommended_enabled_tools": [
+            "recommend_vision_model_for_intent",
+            "list_vision_model_cards",
+            "get_vision_model_card",
+            "verify_vision_model_availability",
             "list_available_vision_models",
             "analyze_image",
             "describe_image",
@@ -60,8 +69,10 @@ def build_nanobot_profile() -> dict[str, Any]:
         "defaults": {
             "provider_model_cache_ttl_seconds": 300,
             "default_max_tokens": 1000,
+            "strict_model_check": True,
             "default_model_env": "PERCIVAL_DEFAULT_MODEL",
             "provider_base_url_env": "PERCIVAL_BASE_URL",
+            "model_catalog_path_env": "PERCIVAL_VISION_MCP_MODEL_CATALOG_PATH",
             "provider_api_key_env_candidates": [
                 "PERCIVAL_API_KEY",
                 "JARVINA_API_KEY",
@@ -71,6 +82,8 @@ def build_nanobot_profile() -> dict[str, Any]:
             "max_output_chars_env": "PERCIVAL_VISION_MCP_MAX_OUTPUT_CHARS",
             "max_image_bytes_env": "PERCIVAL_VISION_MCP_MAX_IMAGE_BYTES",
             "max_image_pixels_env": "PERCIVAL_VISION_MCP_MAX_IMAGE_PIXELS",
+            "strict_model_check_env": "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK",
+            "strict_model_check_force_refresh_env": "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK_FORCE_REFRESH",
             "allowed_image_mime_types_env": "PERCIVAL_VISION_MCP_ALLOWED_IMAGE_MIME_TYPES",
             "allow_insecure_provider_url_env": "PERCIVAL_VISION_MCP_ALLOW_INSECURE_PROVIDER_URL",
             "allow_private_provider_url_env": "PERCIVAL_VISION_MCP_ALLOW_PRIVATE_PROVIDER_URL",

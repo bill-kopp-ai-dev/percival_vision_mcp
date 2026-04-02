@@ -78,6 +78,12 @@ class TestRolloutAndRuntimeConfig(unittest.TestCase):
         self.assertFalse(cfg.emit_compat_warnings)
         self.assertEqual(cfg.rollout_track, "canary")
 
+    def test_strict_model_check_default_is_enabled(self) -> None:
+        with _EnvOverride({"PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": None}):
+            payload = json.loads(vision_tools.get_rollout_status())
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["data"]["model_check"]["strict_model_check"])
+
     def test_strict_rollout_requires_working_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             sample = Path(tmp_dir) / "sample.png"
@@ -95,6 +101,7 @@ class TestRolloutAndRuntimeConfig(unittest.TestCase):
                 "PERCIVAL_VISION_MCP_WORKING_DIR_MODE": "compat",
                 "PERCIVAL_VISION_MCP_ROLLOUT_TRACK": "canary",
                 "PERCIVAL_VISION_MCP_STRICT_WORKING_DIR_DATE": "2026-08-31",
+                "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "true",
             }
         ):
             payload = json.loads(vision_tools.get_rollout_status())
@@ -104,14 +111,23 @@ class TestRolloutAndRuntimeConfig(unittest.TestCase):
         self.assertEqual(payload["data"]["rollout"]["track"], "canary")
         self.assertEqual(payload["data"]["rollout"]["working_dir_mode"], "compat")
         self.assertEqual(payload["data"]["rollout"]["strict_working_dir_date"], "2026-08-31")
+        self.assertTrue(payload["data"]["model_check"]["strict_model_check"])
+        self.assertIn("model_precheck_passed", payload["data"]["model_check"]["impact_metrics_hint"])
 
     def test_security_posture_includes_rollout_block(self) -> None:
-        with _EnvOverride({"PERCIVAL_VISION_MCP_WORKING_DIR_MODE": "compat"}):
+        with _EnvOverride(
+            {
+                "PERCIVAL_VISION_MCP_WORKING_DIR_MODE": "compat",
+                "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "true",
+            }
+        ):
             payload = json.loads(vision_tools.get_security_posture())
 
         self.assertTrue(payload["ok"])
         rollout = payload["data"]["runtime"]["rollout"]
         self.assertEqual(rollout["working_dir_mode"], "compat")
+        model_selection = payload["data"]["runtime"]["model_selection"]
+        self.assertTrue(model_selection["strict_model_check"])
         self.assertIn("working_dir compatibility mode enabled", " ".join(payload["data"]["warnings"]))
 
 

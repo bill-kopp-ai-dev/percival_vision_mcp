@@ -19,6 +19,14 @@ from utils.security_utils import (
     record_security_event,
     sanitize_untrusted_text,
 )
+from utils.vision_model_catalog import (
+    ModelCatalogError,
+    find_alternatives as catalog_find_alternatives,
+    get_catalog_metadata,
+    get_model_card as catalog_get_model_card,
+    list_model_cards as catalog_list_model_cards,
+    normalize_task_type as catalog_normalize_task_type,
+)
 
 VISION_MODEL_KEYWORDS = ("vision", "vl", "llava", "pixtral", "qwen")
 UNTRUSTED_DATA_NOTICE = (
@@ -41,10 +49,42 @@ PROMPT_READ_TEXT = (
 DEFAULT_MAX_ANALYSIS_PROMPT_CHARS = 4000
 DEFAULT_MAX_OUTPUT_CHARS = 8000
 DEFAULT_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+DEFAULT_STRICT_MODEL_CHECK = True
 LEGACY_WORKING_DIR_WARNING = (
     "working_dir omitted; compatibility fallback was used. "
     "Switch clients to explicit working_dir before strict mode date."
 )
+
+DEFAULT_CARD_FIELDS = (
+    "id",
+    "name",
+    "task_types",
+    "capabilities",
+    "cost_estimation",
+    "quality_tier",
+    "speed_tier",
+    "status",
+)
+_ALLOWED_CARD_FIELDS = {
+    "id",
+    "name",
+    "developer",
+    "description",
+    "task_types",
+    "status",
+    "capabilities",
+    "cost_estimation",
+    "pricing",
+    "quality_tier",
+    "speed_tier",
+    "recommended_use_cases",
+    "avoid_use_cases",
+    "aliases",
+    "recommended_api_params",
+}
+_QUALITY_RANK = {"entry": 1, "standard": 2, "pro": 3, "premium": 4}
+_SPEED_RANK = {"slow": 1, "balanced": 2, "fast": 3}
+_COST_RANK = {"low": 1, "moderate": 2, "high": 3, "unknown": 4}
 
 
 def _safe_int(value: Optional[int | str], default: int) -> int:
@@ -131,6 +171,251 @@ def _sanitize_input_text(
     return normalized, None
 
 
+def _parse_card_fields(fields: Optional[str]) -> tuple[list[str], Optional[str]]:
+    if fields is None or not fields.strip():
+        return list(DEFAULT_CARD_FIELDS), None
+
+    requested = [item.strip() for item in fields.split(",") if item.strip()]
+    if not requested:
+        return list(DEFAULT_CARD_FIELDS), None
+
+    invalid = [item for item in requested if item not in _ALLOWED_CARD_FIELDS]
+    if invalid:
+        return [], (
+            f"Invalid fields: {', '.join(sorted(set(invalid)))}. "
+            f"Allowed fields: {', '.join(sorted(_ALLOWED_CARD_FIELDS))}."
+        )
+
+    seen: list[str] = []
+    for field in requested:
+        if field not in seen:
+            seen.append(field)
+    return seen, None
+
+
+def _project_card_fields(card: dict[str, Any], fields: list[str]) -> dict[str, Any]:
+    return {field: card.get(field) for field in fields}
+
+
+def _normalize_limit_offset(limit: int, offset: int, *, max_limit: int = 100) -> tuple[int, int]:
+    safe_limit = max(1, min(max_limit, int(limit)))
+    safe_offset = max(0, int(offset))
+    return safe_limit, safe_offset
+
+
+def _normalize_model_identifier(model_id: str) -> str:
+    return (model_id or "").strip().lower()
+
+
+def _extract_cost_estimation(card: dict[str, Any]) -> str:
+    raw = str(card.get("cost_estimation") or "").strip().lower()
+    if raw in _COST_RANK:
+        return raw
+
+    pricing = card.get("pricing", {})
+    if isinstance(pricing, dict):
+        pricing_cost = str(pricing.get("cost_estimation") or "").strip().lower()
+        if pricing_cost in _COST_RANK:
+            return pricing_cost
+    return "unknown"
+
+
+def _catalog_provider_overlap_count(provider_ids: list[str]) -> int:
+    provider_norm = {_normalize_model_identifier(model_id) for model_id in provider_ids if model_id}
+    if not provider_norm:
+        return 0
+
+    try:
+        catalog_cards = catalog_list_model_cards(task_type=None, include_inactive=False)
+    except Exception:
+        return 0
+
+    overlap = 0
+    for card in catalog_cards:
+        candidates: list[str] = []
+        model_id = str(card.get("id") or "").strip()
+        if model_id:
+            candidates.append(model_id)
+        aliases = card.get("aliases", [])
+        if isinstance(aliases, list):
+            candidates.extend(alias for alias in aliases if isinstance(alias, str) and alias.strip())
+        if any(_normalize_model_identifier(candidate) in provider_norm for candidate in candidates):
+            overlap += 1
+    return overlap
+
+
+def _build_vision_model_availability_payload(
+    model_id: str,
+    task_type: str = "general_vision",
+    force_refresh: bool = False,
+    include_alternatives: bool = True,
+) -> dict[str, Any]:
+    selected_model_id = (model_id or "").strip()
+    normalized_task_type = catalog_normalize_task_type(task_type)
+
+    try:
+        provider_ids, used_cache = list_models(force_refresh=force_refresh)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "model_id": selected_model_id,
+            "task_type": normalized_task_type,
+            "error": f"Failed to query provider models: {exc}",
+        }
+
+    provider_id_set = set(provider_ids)
+    provider_norm_set = {_normalize_model_identifier(value) for value in provider_ids}
+
+    card = None
+    catalog_error = None
+    task_type_matches_card = None
+    try:
+        card = catalog_get_model_card(selected_model_id)
+        if card:
+            task_type_matches_card = normalized_task_type in card.get("task_types", [])
+    except Exception as exc:
+        catalog_error = str(exc)
+
+    lookup_candidates = [selected_model_id]
+    if card:
+        canonical_id = str(card.get("id") or "").strip()
+        if canonical_id:
+            lookup_candidates.append(canonical_id)
+        aliases = card.get("aliases", [])
+        if isinstance(aliases, list):
+            lookup_candidates.extend(
+                alias.strip() for alias in aliases if isinstance(alias, str) and alias.strip()
+            )
+    lookup_candidates = list(dict.fromkeys(lookup_candidates))
+
+    available = any(
+        candidate in provider_id_set
+        or _normalize_model_identifier(candidate) in provider_norm_set
+        for candidate in lookup_candidates
+    )
+
+    catalog_overlap = _catalog_provider_overlap_count(provider_ids)
+    provider_catalog_visible = catalog_overlap > 0
+    provider_scope_unknown = bool(provider_ids) and not provider_catalog_visible
+
+    availability_state = "available" if available else "unavailable"
+    if provider_scope_unknown:
+        availability_state = "unknown"
+        if card is not None:
+            available = True
+
+    alternatives: list[dict[str, Any]] = []
+    if include_alternatives and availability_state == "unavailable":
+        try:
+            alternatives = catalog_find_alternatives(
+                model_id=selected_model_id,
+                task_type=normalized_task_type,
+                max_results=3,
+            )
+            if provider_catalog_visible:
+                alternatives = [
+                    alt
+                    for alt in alternatives
+                    if _normalize_model_identifier(str(alt.get("id") or "")) in provider_norm_set
+                ]
+        except Exception:
+            alternatives = []
+
+    payload: dict[str, Any] = {
+        "ok": True,
+        "model_id": selected_model_id,
+        "task_type": normalized_task_type,
+        "available": available,
+        "availability_state": availability_state,
+        "provider_check": {
+            "provider_model_count": len(provider_ids),
+            "used_cache": used_cache,
+            "catalog_overlap_count": catalog_overlap,
+            "catalog_visibility": "visible" if provider_catalog_visible else "not_visible",
+        },
+        "catalog_check": {
+            "found_in_catalog": card is not None,
+            "task_type_matches": task_type_matches_card,
+        },
+    }
+
+    if card:
+        payload["catalog_model"] = {
+            "id": card.get("id"),
+            "name": card.get("name"),
+            "task_types": card.get("task_types", []),
+            "quality_tier": card.get("quality_tier"),
+            "speed_tier": card.get("speed_tier"),
+            "cost_estimation": card.get("cost_estimation"),
+        }
+
+    if catalog_error:
+        payload["catalog_error"] = catalog_error
+
+    if availability_state == "unknown":
+        payload["recommendation"] = (
+            "Provider /models does not appear vision-catalog-aware for this account; "
+            "treating availability as uncertain to avoid false negatives."
+        )
+    elif availability_state == "unavailable":
+        payload["recommendation"] = "Select an alternative active model and try again."
+        payload["alternatives"] = alternatives
+    else:
+        payload["recommendation"] = f"Model '{selected_model_id}' appears available."
+
+    return payload
+
+
+def _infer_intent_use_case_hints(intent: str) -> set[str]:
+    normalized = (intent or "").strip().lower()
+    if not normalized:
+        return set()
+
+    mapping = {
+        "private_document_qa": {"document", "ocr", "invoice", "receipt", "contract", "form"},
+        "secure_image_analysis": {"secure", "privacy", "confidential", "sensitive"},
+        "web_scraping_vision": {"web", "screenshot", "scraping", "ui"},
+        "general_image_captioning": {"caption", "describe", "description", "summary"},
+        "complex_chart_analysis": {"chart", "graph", "plot", "dashboard"},
+        "high_res_visual_reasoning": {"high-res", "high resolution", "zoom", "fine detail"},
+        "instruction_following": {"instruction", "follow", "compliance"},
+        "spatial_awareness_tasks": {"spatial", "layout", "position"},
+        "fast_image_tagging": {"tag", "classification", "label"},
+        "multimodal_chatbots": {"chatbot", "assistant", "chat"},
+        "long_context_multimodal": {"long context", "multi-step", "conversation"},
+        "video_frame_analysis": {"video", "frame"},
+        "real_time_vision_apps": {"real-time", "realtime", "stream", "live"},
+        "high_volume_processing": {"batch", "volume", "throughput"},
+        "real_time_data_parsing": {"parse", "extract data", "real-time parsing"},
+        "fast_visual_feedback": {"fast feedback", "quick feedback", "rapid"},
+    }
+
+    hints: set[str] = set()
+    for use_case, keywords in mapping.items():
+        if any(keyword in normalized for keyword in keywords):
+            hints.add(use_case)
+    return hints
+
+
+def _normalize_privacy_tier(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"standard", "e2ee"}:
+        return normalized
+    return None
+
+
+def _task_type_for_operation(operation: str) -> str:
+    mapping = {
+        "analyze_image": "general_vision",
+        "describe_image": "general_vision",
+        "identify_objects": "general_vision",
+        "read_text": "ocr",
+    }
+    return mapping.get((operation or "").strip(), "general_vision")
+
+
 def _build_untrusted_security_payload(
     *,
     source: str,
@@ -201,6 +486,205 @@ def _resolve_working_dir_compat(
     )
     warning = LEGACY_WORKING_DIR_WARNING if rollout.emit_compat_warnings else None
     return derived, "compat_derived", warning, None
+
+
+def _build_model_check_state(
+    *,
+    operation: str,
+    requested_model: Optional[str],
+    effective_model: str,
+    strict_enabled: bool,
+    task_type: str,
+    availability_payload: Optional[dict[str, Any]] = None,
+    blocked_code: Optional[str] = None,
+) -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "strict_enabled": strict_enabled,
+        "operation_task_type": task_type,
+        "requested_model": requested_model,
+        "effective_model": effective_model,
+        "source_env": "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK",
+    }
+    if availability_payload is not None:
+        state["availability_state"] = availability_payload.get("availability_state")
+        state["catalog_check"] = availability_payload.get("catalog_check")
+        state["provider_check"] = availability_payload.get("provider_check")
+    if blocked_code:
+        state["blocked_code"] = blocked_code
+    return state
+
+
+def _evaluate_model_precheck(
+    *,
+    operation: str,
+    requested_model: Optional[str],
+    request_id: str,
+) -> tuple[Optional[str], dict[str, Any], str]:
+    task_type = _task_type_for_operation(operation)
+    default_model = str(load_provider_runtime_config().default_model or "").strip()
+    effective_model = (requested_model or "").strip() or default_model
+    strict_enabled = env_bool("PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK", DEFAULT_STRICT_MODEL_CHECK)
+    force_refresh = env_bool("PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK_FORCE_REFRESH", False)
+
+    if not effective_model:
+        state = _build_model_check_state(
+            operation=operation,
+            requested_model=requested_model,
+            effective_model=effective_model,
+            strict_enabled=strict_enabled,
+            task_type=task_type,
+            blocked_code="missing_effective_model",
+        )
+        record_security_event(
+            "model_precheck_blocked",
+            {
+                "operation": operation,
+                "model": "",
+                "task_type": task_type,
+                "reason": "missing_effective_model",
+            },
+        )
+        return (
+            error_response(
+                "Model is required after normalization.",
+                code="missing_model",
+                details=state,
+                request_id=request_id,
+                tool_name=operation,
+            ),
+            state,
+            effective_model,
+        )
+
+    if not strict_enabled:
+        state = _build_model_check_state(
+            operation=operation,
+            requested_model=requested_model,
+            effective_model=effective_model,
+            strict_enabled=False,
+            task_type=task_type,
+        )
+        record_security_event(
+            "model_precheck_skipped",
+            {
+                "operation": operation,
+                "model": effective_model,
+                "task_type": task_type,
+                "reason": "disabled_by_env",
+            },
+        )
+        return None, state, effective_model
+
+    availability_payload = _build_vision_model_availability_payload(
+        model_id=effective_model,
+        task_type=task_type,
+        force_refresh=force_refresh,
+        include_alternatives=True,
+    )
+
+    if not availability_payload.get("ok"):
+        state = _build_model_check_state(
+            operation=operation,
+            requested_model=requested_model,
+            effective_model=effective_model,
+            strict_enabled=True,
+            task_type=task_type,
+            availability_payload=availability_payload,
+            blocked_code="model_precheck_failed",
+        )
+        record_security_event(
+            "model_precheck_blocked",
+            {
+                "operation": operation,
+                "model": effective_model,
+                "task_type": task_type,
+                "reason": "model_precheck_failed",
+            },
+        )
+        return (
+            error_response(
+                "Could not verify model status before execution.",
+                code="model_precheck_failed",
+                details={"model_check": state, "precheck": availability_payload},
+                request_id=request_id,
+                tool_name=operation,
+            ),
+            state,
+            effective_model,
+        )
+
+    availability_state = str(availability_payload.get("availability_state") or "").strip().lower()
+    if not availability_state:
+        availability_state = "available" if availability_payload.get("available") else "unavailable"
+
+    catalog_check = availability_payload.get("catalog_check", {})
+    blocked_code: Optional[str] = None
+    blocked_message = ""
+    if availability_state == "unavailable":
+        blocked_code = "model_not_available"
+        blocked_message = f"Model '{effective_model}' is not currently available on provider."
+    elif not catalog_check.get("found_in_catalog"):
+        blocked_code = "model_missing_in_catalog"
+        blocked_message = (
+            f"Model '{effective_model}' is active in provider but missing in local model catalog. "
+            "Use list_vision_model_cards/get_vision_model_card to pick a cataloged model."
+        )
+    elif catalog_check.get("task_type_matches") is False:
+        blocked_code = "model_task_mismatch"
+        blocked_message = (
+            f"Model '{effective_model}' is not classified for task "
+            f"'{task_type}' in local model catalog."
+        )
+
+    if blocked_code:
+        state = _build_model_check_state(
+            operation=operation,
+            requested_model=requested_model,
+            effective_model=effective_model,
+            strict_enabled=True,
+            task_type=task_type,
+            availability_payload=availability_payload,
+            blocked_code=blocked_code,
+        )
+        record_security_event(
+            "model_precheck_blocked",
+            {
+                "operation": operation,
+                "model": effective_model,
+                "task_type": task_type,
+                "reason": blocked_code,
+            },
+        )
+        return (
+            error_response(
+                blocked_message,
+                code=blocked_code,
+                details={"model_check": state, "precheck": availability_payload},
+                request_id=request_id,
+                tool_name=operation,
+            ),
+            state,
+            effective_model,
+        )
+
+    state = _build_model_check_state(
+        operation=operation,
+        requested_model=requested_model,
+        effective_model=effective_model,
+        strict_enabled=True,
+        task_type=task_type,
+        availability_payload=availability_payload,
+    )
+    record_security_event(
+        "model_precheck_passed",
+        {
+            "operation": operation,
+            "model": effective_model,
+            "task_type": task_type,
+            "availability_state": availability_state,
+        },
+    )
+    return None, state, effective_model
 
 
 def _analyze_with_prompt(
@@ -309,11 +793,19 @@ def _analyze_with_prompt(
             tool_name=operation,
         )
 
+    precheck_error, model_check_state, effective_model = _evaluate_model_precheck(
+        operation=operation,
+        requested_model=model,
+        request_id=request_id,
+    )
+    if precheck_error:
+        return precheck_error
+
     try:
         result = run_vision_completion(
             image_path=str(resolved_image_path),
             prompt=sanitized_prompt,
-            model=model,
+            model=effective_model,
             max_tokens=_safe_int(max_tokens, 1000),
         )
     except Exception as exc:
@@ -330,7 +822,8 @@ def _analyze_with_prompt(
             code="vision_request_failed",
             details={
                 "image_path_ref": _safe_path_ref(str(resolved_image_path)),
-                "model": model,
+                "model": effective_model,
+                "model_check": model_check_state,
             },
             legacy_text="Falha ao processar a imagem.",
             request_id=request_id,
@@ -365,6 +858,7 @@ def _analyze_with_prompt(
         "model": result.get("model"),
         "max_tokens": result.get("max_tokens"),
         "provider_base_url": result.get("base_url"),
+        "model_check": model_check_state,
         "security": security_payload,
         "rollout": {
             "working_dir_mode": rollout.working_dir_mode,
@@ -447,6 +941,466 @@ def list_available_vision_models(force_refresh: bool = False) -> str:
 
 
 @mcp.tool()
+def list_vision_model_cards(
+    task_type: str = "general_vision",
+    include_inactive: bool = False,
+    limit: int = 12,
+    offset: int = 0,
+    fields: Optional[str] = None,
+) -> str:
+    """
+    List local vision model cards from `vision_models.json` without provider calls.
+
+    Recommended as the first step for model selection because it is deterministic
+    and cheap.
+    """
+    request_id = new_request_id("catalog")
+    blocked = _tool_access_guard("list_vision_model_cards", request_id)
+    if blocked:
+        return blocked
+
+    try:
+        normalized_task_type = catalog_normalize_task_type(task_type)
+        selected_fields, fields_error = _parse_card_fields(fields)
+        if fields_error:
+            return error_response(
+                fields_error,
+                code="invalid_fields",
+                details={"fields": fields},
+                request_id=request_id,
+                tool_name="list_vision_model_cards",
+            )
+
+        safe_limit, safe_offset = _normalize_limit_offset(limit, offset)
+        cards = catalog_list_model_cards(task_type=normalized_task_type, include_inactive=include_inactive)
+        total_count = len(cards)
+        page = cards[safe_offset:safe_offset + safe_limit]
+        projected_models = [_project_card_fields(card, selected_fields) for card in page]
+        metadata = get_catalog_metadata()
+
+        return success_response(
+            data={
+                "operation": "list_vision_model_cards",
+                "task_type": normalized_task_type,
+                "include_inactive": include_inactive,
+                "catalog_metadata": metadata,
+                "total_count": total_count,
+                "count": len(projected_models),
+                "limit": safe_limit,
+                "offset": safe_offset,
+                "has_more": safe_offset + len(projected_models) < total_count,
+                "fields": selected_fields,
+                "models": projected_models,
+            },
+            legacy_text=(
+                "Vision model cards listed. "
+                f"task_type={normalized_task_type} count={len(projected_models)} total={total_count}"
+            ),
+            request_id=request_id,
+            tool_name="list_vision_model_cards",
+        )
+    except ModelCatalogError as exc:
+        return error_response(
+            str(exc),
+            code="catalog_error",
+            details={"task_type": task_type},
+            request_id=request_id,
+            tool_name="list_vision_model_cards",
+        )
+    except Exception as exc:
+        return error_response(
+            f"Unexpected error while listing vision model cards: {exc}",
+            code="unexpected_error",
+            details={"task_type": task_type},
+            request_id=request_id,
+            tool_name="list_vision_model_cards",
+        )
+
+
+@mcp.tool()
+def get_vision_model_card(model_id: str, fields: Optional[str] = None) -> str:
+    """
+    Return one model card from the local vision catalog by id or alias.
+    """
+    request_id = new_request_id("catalog")
+    blocked = _tool_access_guard("get_vision_model_card", request_id)
+    if blocked:
+        return blocked
+
+    model_id_normalized = (model_id or "").strip()
+    if not model_id_normalized:
+        return error_response(
+            "model_id is required.",
+            code="missing_model_id",
+            request_id=request_id,
+            tool_name="get_vision_model_card",
+        )
+
+    try:
+        card = catalog_get_model_card(model_id_normalized)
+        metadata = get_catalog_metadata()
+        if not card:
+            return error_response(
+                f"Model '{model_id_normalized}' was not found in catalog.",
+                code="model_not_found",
+                details={"model_id": model_id_normalized, "catalog_metadata": metadata},
+                request_id=request_id,
+                tool_name="get_vision_model_card",
+            )
+
+        if fields is None:
+            selected_fields = sorted(card.keys())
+            projected_card = card
+        else:
+            selected_fields, fields_error = _parse_card_fields(fields)
+            if fields_error:
+                return error_response(
+                    fields_error,
+                    code="invalid_fields",
+                    details={"fields": fields, "model_id": model_id_normalized},
+                    request_id=request_id,
+                    tool_name="get_vision_model_card",
+                )
+            projected_card = _project_card_fields(card, selected_fields)
+
+        return success_response(
+            data={
+                "operation": "get_vision_model_card",
+                "catalog_metadata": metadata,
+                "fields": selected_fields,
+                "model": projected_card,
+            },
+            legacy_text=f"Vision model card: {card.get('id')} ({card.get('name')})",
+            request_id=request_id,
+            tool_name="get_vision_model_card",
+        )
+    except ModelCatalogError as exc:
+        return error_response(
+            str(exc),
+            code="catalog_error",
+            details={"model_id": model_id_normalized},
+            request_id=request_id,
+            tool_name="get_vision_model_card",
+        )
+    except Exception as exc:
+        return error_response(
+            f"Unexpected error while fetching model card: {exc}",
+            code="unexpected_error",
+            details={"model_id": model_id_normalized},
+            request_id=request_id,
+            tool_name="get_vision_model_card",
+        )
+
+
+@mcp.tool()
+def verify_vision_model_availability(
+    model_id: str,
+    task_type: str = "general_vision",
+    force_refresh: bool = False,
+    include_alternatives: bool = True,
+) -> str:
+    """
+    Verify whether a selected vision model is viable (catalog + provider checks).
+    """
+    request_id = new_request_id("verify")
+    blocked = _tool_access_guard("verify_vision_model_availability", request_id)
+    if blocked:
+        return blocked
+
+    model_id_normalized = (model_id or "").strip()
+    if not model_id_normalized:
+        return error_response(
+            "model_id is required.",
+            code="missing_model_id",
+            request_id=request_id,
+            tool_name="verify_vision_model_availability",
+        )
+
+    payload = _build_vision_model_availability_payload(
+        model_id=model_id_normalized,
+        task_type=task_type,
+        force_refresh=force_refresh,
+        include_alternatives=include_alternatives,
+    )
+    if not payload.get("ok"):
+        return error_response(
+            payload.get("error", "Failed to verify model availability."),
+            code="availability_check_failed",
+            details=payload,
+            request_id=request_id,
+            tool_name="verify_vision_model_availability",
+        )
+
+    availability_state = str(payload.get("availability_state") or "")
+    if availability_state == "available":
+        legacy_text = f"Model '{model_id_normalized}' appears available."
+    elif availability_state == "unknown":
+        legacy_text = f"Model '{model_id_normalized}' availability is uncertain (provider visibility mismatch)."
+    else:
+        legacy_text = f"Model '{model_id_normalized}' appears unavailable."
+
+    return success_response(
+        data={
+            "operation": "verify_vision_model_availability",
+            **payload,
+        },
+        legacy_text=legacy_text,
+        request_id=request_id,
+        tool_name="verify_vision_model_availability",
+    )
+
+
+@mcp.tool()
+def recommend_vision_model_for_intent(
+    task_type: str = "general_vision",
+    intent: str = "",
+    max_results: int = 5,
+    preferred_privacy_tier: Optional[str] = None,
+    prioritize_cost: bool = False,
+    verify_online: bool = True,
+    force_model_refresh: bool = False,
+    include_unavailable: bool = False,
+    fields: Optional[str] = None,
+) -> str:
+    """
+    Rank best-fit vision models for an intent using catalog metadata.
+    """
+    request_id = new_request_id("recommend")
+    blocked = _tool_access_guard("recommend_vision_model_for_intent", request_id)
+    if blocked:
+        return blocked
+
+    try:
+        normalized_task_type = catalog_normalize_task_type(task_type)
+        if max_results < 1:
+            return error_response(
+                "max_results must be >= 1.",
+                code="invalid_max_results",
+                details={"max_results": max_results},
+                request_id=request_id,
+                tool_name="recommend_vision_model_for_intent",
+            )
+
+        selected_fields, fields_error = _parse_card_fields(fields)
+        if fields_error:
+            return error_response(
+                fields_error,
+                code="invalid_fields",
+                details={"fields": fields},
+                request_id=request_id,
+                tool_name="recommend_vision_model_for_intent",
+            )
+
+        privacy_preference = _normalize_privacy_tier(preferred_privacy_tier)
+        if preferred_privacy_tier and not privacy_preference:
+            return error_response(
+                "preferred_privacy_tier must be one of: standard, e2ee.",
+                code="invalid_privacy_tier",
+                details={"preferred_privacy_tier": preferred_privacy_tier},
+                request_id=request_id,
+                tool_name="recommend_vision_model_for_intent",
+            )
+
+        cards = catalog_list_model_cards(task_type=normalized_task_type, include_inactive=False)
+        intent_hints = _infer_intent_use_case_hints(intent)
+        intent_normalized = (intent or "").strip().lower()
+        fast_intent = any(token in intent_normalized for token in {"fast", "quick", "real-time", "realtime", "urgent"})
+
+        provider_ids: list[str] = []
+        provider_norm_set: set[str] = set()
+        provider_visibility = "not_checked"
+        provider_used_cache = False
+
+        if verify_online:
+            try:
+                provider_ids, provider_used_cache = list_models(force_refresh=force_model_refresh)
+                provider_norm_set = {_normalize_model_identifier(model_id) for model_id in provider_ids}
+                overlap = _catalog_provider_overlap_count(provider_ids)
+                provider_visibility = "visible" if overlap > 0 else "not_visible"
+            except Exception:
+                provider_visibility = "query_failed"
+
+        ranked: list[dict[str, Any]] = []
+        for card in cards:
+            model_id = str(card.get("id") or "").strip()
+            if not model_id:
+                continue
+
+            availability_state = "not_checked"
+            is_available = None
+            if verify_online and provider_visibility in {"visible", "not_visible"}:
+                aliases = card.get("aliases", [])
+                candidates = [model_id]
+                if isinstance(aliases, list):
+                    candidates.extend(
+                        alias.strip() for alias in aliases if isinstance(alias, str) and alias.strip()
+                    )
+                candidates = list(dict.fromkeys(candidates))
+                available_by_models = any(
+                    _normalize_model_identifier(candidate) in provider_norm_set
+                    for candidate in candidates
+                )
+                if provider_visibility == "not_visible":
+                    availability_state = "unknown"
+                    is_available = True
+                else:
+                    availability_state = "available" if available_by_models else "unavailable"
+                    is_available = available_by_models
+
+            if availability_state == "unavailable" and not include_unavailable:
+                continue
+
+            score = 0.0
+            reasons: list[str] = []
+
+            recommended_use_cases = {
+                str(item).strip().lower()
+                for item in card.get("recommended_use_cases", [])
+                if isinstance(item, str) and item.strip()
+            }
+            matched_use_cases = sorted(intent_hints.intersection(recommended_use_cases))
+            if matched_use_cases:
+                score += min(36.0, 12.0 * len(matched_use_cases))
+                reasons.append(f"use_case_match={matched_use_cases}")
+            elif intent_hints:
+                score += 2.0
+            else:
+                score += 8.0
+                reasons.append("generic_intent")
+
+            privacy_tier = str((card.get("capabilities") or {}).get("privacy_tier") or "standard")
+            if privacy_preference:
+                if privacy_tier == privacy_preference:
+                    score += 12.0
+                    reasons.append(f"privacy_alignment={privacy_tier}")
+                else:
+                    score -= 8.0
+                    reasons.append("privacy_mismatch")
+            elif "secure_image_analysis" in intent_hints and privacy_tier == "e2ee":
+                score += 8.0
+                reasons.append("secure_intent_alignment")
+
+            quality_tier = str(card.get("quality_tier") or "standard")
+            score += float(_QUALITY_RANK.get(quality_tier, 2))
+
+            speed_tier = str(card.get("speed_tier") or "balanced")
+            if fast_intent:
+                if speed_tier == "fast":
+                    score += 8.0
+                elif speed_tier == "balanced":
+                    score += 3.0
+                else:
+                    score -= 4.0
+                reasons.append(f"speed_alignment={speed_tier}")
+
+            cost_estimation = _extract_cost_estimation(card)
+            cost_rank = _COST_RANK.get(cost_estimation, 4)
+            if prioritize_cost:
+                score += float((5 - cost_rank) * 4)
+                reasons.append("cost_priority")
+
+            if availability_state == "available":
+                score += 10.0
+                reasons.append("provider_available")
+            elif availability_state == "unknown":
+                score += 3.0
+                reasons.append("provider_availability_unknown")
+            elif availability_state == "unavailable":
+                score -= 20.0
+                reasons.append("provider_unavailable")
+
+            ranked.append(
+                {
+                    "model_id": model_id,
+                    "score": round(score, 4),
+                    "availability_state": availability_state,
+                    "available": is_available,
+                    "matched_use_cases": matched_use_cases,
+                    "privacy_tier": privacy_tier,
+                    "cost_estimation": cost_estimation,
+                    "cost_rank": cost_rank,
+                    "reasons": reasons,
+                    "card": card,
+                }
+            )
+
+        ranked.sort(
+            key=lambda item: (
+                -item["score"],
+                item["cost_rank"],
+                item["model_id"],
+            )
+        )
+        limited = ranked[:max_results]
+
+        candidates: list[dict[str, Any]] = []
+        for item in limited:
+            projected_card = _project_card_fields(item["card"], selected_fields)
+            candidates.append(
+                {
+                    "model_id": item["model_id"],
+                    "score": item["score"],
+                    "availability_state": item["availability_state"],
+                    "available": item["available"],
+                    "matched_use_cases": item["matched_use_cases"],
+                    "privacy_tier": item["privacy_tier"],
+                    "cost_estimation": item["cost_estimation"],
+                    "reasons": item["reasons"],
+                    "model": projected_card,
+                }
+            )
+
+        return success_response(
+            data={
+                "operation": "recommend_vision_model_for_intent",
+                "task_type": normalized_task_type,
+                "intent": intent,
+                "intent_hints": sorted(intent_hints),
+                "preferences": {
+                    "preferred_privacy_tier": privacy_preference,
+                    "prioritize_cost": prioritize_cost,
+                },
+                "online_check": {
+                    "enabled": verify_online,
+                    "provider_model_count": len(provider_ids),
+                    "provider_catalog_visibility": provider_visibility,
+                    "used_cache": provider_used_cache,
+                },
+                "fields": selected_fields,
+                "count": len(candidates),
+                "candidates": candidates,
+                "recommended_workflow": [
+                    "recommend_vision_model_for_intent",
+                    "verify_vision_model_availability",
+                    "analyze_image/describe_image/read_text/identify_objects",
+                ],
+            },
+            legacy_text=(
+                "Vision model recommendation completed. "
+                "Use verify_vision_model_availability on the top candidate before execution."
+            ),
+            request_id=request_id,
+            tool_name="recommend_vision_model_for_intent",
+        )
+    except ModelCatalogError as exc:
+        return error_response(
+            str(exc),
+            code="catalog_error",
+            details={"task_type": task_type},
+            request_id=request_id,
+            tool_name="recommend_vision_model_for_intent",
+        )
+    except Exception as exc:
+        return error_response(
+            f"Unexpected error while recommending models: {exc}",
+            code="unexpected_error",
+            details={"task_type": task_type, "intent": intent},
+            request_id=request_id,
+            tool_name="recommend_vision_model_for_intent",
+        )
+
+
+@mcp.tool()
 def analyze_image(
     image_path: str,
     working_dir: Optional[str] = None,
@@ -469,6 +1423,8 @@ def analyze_image(
 
     Security and contract:
     - `image_path` must resolve inside validated `working_dir`.
+    - when `PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK=true`, model precheck is enforced
+      against local catalog + provider visibility before provider execution.
     - output is treated as untrusted data and sanitized.
     - response includes `data.security` and `data.rollout`.
 
@@ -509,7 +1465,7 @@ def describe_image(
     Produce a detailed general-purpose description for one image.
 
     Uses built-in descriptive prompt and the same validation/sanitization path as
-    `analyze_image`.
+    `analyze_image` (including env-gated strict model precheck).
 
     Inputs:
     - `image_path`, `working_dir`, `model`, `max_tokens`.
@@ -545,7 +1501,7 @@ def identify_objects(
     Identify distinct objects visible in one image.
 
     Uses built-in object-focused prompt and the same security controls as
-    `analyze_image`.
+    `analyze_image` (including env-gated strict model precheck).
 
     Inputs:
     - `image_path`, `working_dir`, `model`, `max_tokens`.
@@ -581,6 +1537,7 @@ def read_text(
     Extract visible text from one image (OCR-style).
 
     Uses built-in OCR prompt and shared validation/sanitization pipeline.
+    Model precheck behavior follows `analyze_image`.
 
     Inputs:
     - `image_path`, `working_dir`, `model`, `max_tokens`.
@@ -763,6 +1720,8 @@ def get_security_posture() -> str:
     custom_system_guardrail = bool(os.getenv("PERCIVAL_VISION_MCP_SYSTEM_GUARDRAIL_PROMPT", "").strip())
     allow_security_metrics_clear = env_bool("PERCIVAL_VISION_MCP_ALLOW_SECURITY_METRICS_CLEAR", False)
     expose_security_event_details = env_bool("PERCIVAL_VISION_MCP_EXPOSE_SECURITY_EVENT_DETAILS", False)
+    strict_model_check = env_bool("PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK", DEFAULT_STRICT_MODEL_CHECK)
+    strict_model_check_force_refresh = env_bool("PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK_FORCE_REFRESH", False)
     max_prompt_chars = env_int("PERCIVAL_VISION_MCP_MAX_ANALYSIS_PROMPT_CHARS", DEFAULT_MAX_ANALYSIS_PROMPT_CHARS)
     max_output_chars = env_int("PERCIVAL_VISION_MCP_MAX_OUTPUT_CHARS", DEFAULT_MAX_OUTPUT_CHARS)
     max_image_bytes = env_int("PERCIVAL_VISION_MCP_MAX_IMAGE_BYTES", DEFAULT_MAX_IMAGE_BYTES)
@@ -800,6 +1759,10 @@ def get_security_posture() -> str:
         warnings.append("tool denylist is active")
     if audit_state.get("enabled"):
         warnings.append("persistent security audit logging is enabled")
+    if strict_model_check:
+        warnings.append("strict vision model precheck is enabled")
+    else:
+        warnings.append("strict vision model precheck is disabled; model selection remains advisory")
     if rollout.working_dir_mode == "compat":
         warnings.append(
             "working_dir compatibility mode enabled; plan migration before strict rollout date"
@@ -830,6 +1793,12 @@ def get_security_posture() -> str:
                 "allowed_image_mime_types": allowed_image_mime_types,
                 "disable_system_guardrail": disable_system_guardrail,
                 "custom_system_guardrail_prompt": custom_system_guardrail,
+            },
+            "model_selection": {
+                "strict_model_check": strict_model_check,
+                "strict_model_check_env": "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK",
+                "strict_model_check_force_refresh": strict_model_check_force_refresh,
+                "strict_model_check_force_refresh_env": "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK_FORCE_REFRESH",
             },
             "telemetry": {
                 "allow_security_metrics_clear": allow_security_metrics_clear,
@@ -877,6 +1846,8 @@ def get_rollout_status() -> str:
     if blocked:
         return blocked
     rollout = load_rollout_config()
+    strict_model_check = env_bool("PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK", DEFAULT_STRICT_MODEL_CHECK)
+    strict_model_check_force_refresh = env_bool("PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK_FORCE_REFRESH", False)
     payload = {
         "operation": "get_rollout_status",
         "rollout": {
@@ -886,10 +1857,22 @@ def get_rollout_status() -> str:
             "strict_working_dir_date": rollout.strict_working_dir_date,
             "next_breaking_change": "working_dir required when mode=strict",
         },
+        "model_check": {
+            "strict_model_check": strict_model_check,
+            "strict_model_check_env": "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK",
+            "strict_model_check_force_refresh": strict_model_check_force_refresh,
+            "strict_model_check_force_refresh_env": "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK_FORCE_REFRESH",
+            "impact_metrics_hint": [
+                "model_precheck_skipped",
+                "model_precheck_passed",
+                "model_precheck_blocked",
+            ],
+        },
         "guidance": [
             "Prefer explicit working_dir in all tool calls.",
             "Use strict mode in staging before promoting to production.",
             "Monitor get_security_metrics for compat_working_dir_derived events.",
+            "Monitor model_precheck_skipped/passed/blocked counters for model-check impact.",
         ],
     }
     return success_response(

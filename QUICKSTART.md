@@ -14,8 +14,11 @@ uv sync --directory mcp_servers/percival_vision_mcp
 export PERCIVAL_API_KEY="your-api-key"
 export PERCIVAL_BASE_URL="https://api.venice.ai/api/v1"
 export PERCIVAL_DEFAULT_MODEL="qwen-2.5-vl"
+# export PERCIVAL_VISION_MCP_MODEL_CATALOG_PATH="/absolute/path/to/custom/vision_models.json"
 export PERCIVAL_VISION_MCP_ALLOWED_ROOTS="/absolute/path/to/percival.OS_Dev"
 export PERCIVAL_VISION_MCP_WORKING_DIR_MODE="compat"
+export PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK="true"
+export PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK_FORCE_REFRESH="false"
 export PERCIVAL_VISION_MCP_ALLOW_PRIVATE_PROVIDER_URL="false"
 export PERCIVAL_VISION_MCP_ALLOW_INSECURE_PROVIDER_URL="false"
 export PERCIVAL_VISION_MCP_ALLOW_SECURITY_METRICS_CLEAR="false"
@@ -62,7 +65,20 @@ Canary em modo estrito:
 PERCIVAL_VISION_MCP_WORKING_DIR_MODE=strict uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode stdio
 ```
 
+Canary para Fase B de modelo estrito:
+
+```bash
+PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK=true uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode stdio
+```
+
+Override legado temporário (somente migração):
+
+```bash
+PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK=false uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode stdio
+```
+
 Checklist rápido:
 - `get_rollout_status` retorna `working_dir_mode=strict` no canary.
 - clientes legados sem `working_dir` falham com `code=missing_working_dir`.
 - `get_security_metrics` mostra queda de `compat_working_dir_derived`.
+- para Fase B, monitorar `model_precheck_skipped`, `model_precheck_passed`, `model_precheck_blocked`.
