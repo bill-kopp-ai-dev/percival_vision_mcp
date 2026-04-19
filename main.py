@@ -1,14 +1,15 @@
 import argparse
 import asyncio
-import hmac
 import json
+import logging
 import os
-from ipaddress import ip_address
+import hmac
 from typing import Sequence
+from ipaddress import ip_address
 
 from server import configure_runtime_settings, mcp
 from utils.nanobot_profile import CONTRACT_VERSION, SERVER_NAME, build_nanobot_profile
-from utils.runtime_config import load_http_runtime_config, load_rollout_config
+from utils.config import JARVINA_BASE_URL, JARVINA_VISION_MODEL
 
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -16,9 +17,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 import uvicorn
 
-# Import tools for registration side effects.
+# Import tools for registration side effects
 import tools.vision_tools  # noqa: F401
 
+logger = logging.getLogger(__name__)
 
 def _is_loopback_host(host: str) -> bool:
     normalized_host = host.strip().lower()
@@ -29,246 +31,74 @@ def _is_loopback_host(host: str) -> bool:
     except ValueError:
         return False
 
-
 class BearerTokenAuthMiddleware(BaseHTTPMiddleware):
-    """Require bearer auth for HTTP transports when token is configured."""
-
     def __init__(self, app, token: str):
         super().__init__(app)
         self._token = token.strip()
 
     async def dispatch(self, request: Request, call_next):
-        authorization = request.headers.get("authorization", "")
-        header_token = request.headers.get("x-mcp-auth-token", "")
-
         provided_token = ""
-        if authorization.lower().startswith("bearer "):
-            provided_token = authorization[7:].strip()
-        elif header_token:
-            provided_token = header_token.strip()
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            provided_token = auth_header[7:].strip()
+        elif "x-mcp-auth-token" in request.headers:
+            provided_token = request.headers["x-mcp-auth-token"].strip()
 
         if not provided_token or not hmac.compare_digest(provided_token, self._token):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
         return await call_next(request)
 
-
-def _validate_http_runtime_security(
-    *,
-    mode: str,
-    host: str,
-    allow_remote_http: bool,
-    allow_unauthenticated_loopback_http: bool,
-    auth_token: str | None,
-    auth_token_env: str,
-) -> None:
-    if mode not in {"sse", "streamable-http"}:
-        return
-
-    loopback_host = _is_loopback_host(host)
-    if not loopback_host and not allow_remote_http:
-        raise ValueError(
-            "Refusing to bind HTTP transport to a non-loopback host without --allow-remote-http."
-        )
-
-    if not loopback_host and not auth_token:
-        raise ValueError(
-            "Remote HTTP mode requires authentication. "
-            f"Set {auth_token_env} (or change token env var with --auth-token-env)."
-        )
-
-    if loopback_host and not auth_token:
-        if not allow_unauthenticated_loopback_http:
-            raise ValueError(
-                "Loopback HTTP mode requires authentication by default. "
-                f"Set {auth_token_env} or explicitly allow unauthenticated loopback "
-                "with --allow-unauthenticated-loopback-http."
-            )
-        print(
-            "[security-warning] HTTP mode on loopback without authentication token. "
-            "Explicitly allowed by configuration; use only for local development."
-        )
-
-
-def _create_http_transport_app(
-    *,
-    mode: str,
-    mount_path: str,
-    auth_token: str | None,
-) -> Starlette:
+async def _run_http_transport(mode: str, host: str, port: int, log_level: str, mount_path: str, auth_token: str | None):
     if mode == "sse":
         app = mcp.sse_app(mount_path=mount_path)
-    elif mode == "streamable-http":
-        app = mcp.streamable_http_app()
     else:
-        raise ValueError(f"Unsupported HTTP mode: {mode}")
+        app = mcp.streamable_http_app()
 
     if auth_token:
         app.add_middleware(BearerTokenAuthMiddleware, token=auth_token)
 
-    return app
-
-
-async def _run_http_transport(
-    *,
-    mode: str,
-    host: str,
-    port: int,
-    log_level: str,
-    mount_path: str,
-    auth_token: str | None,
-) -> None:
-    app = _create_http_transport_app(
-        mode=mode,
-        mount_path=mount_path,
-        auth_token=auth_token,
-    )
-    config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        log_level=log_level.lower(),
-    )
+    config = uvicorn.Config(app, host=host, port=port, log_level=log_level.lower())
     server = uvicorn.Server(config)
     await server.serve()
 
-
-def _build_arg_parser() -> argparse.ArgumentParser:
-    runtime = load_http_runtime_config()
-    parser = argparse.ArgumentParser(description="Percival Vision MCP Server")
-    parser.add_argument(
-        "--mode",
-        choices=("stdio", "sse", "streamable-http"),
-        default=runtime.mode,
-        help="MCP transport mode (default: stdio).",
-    )
-    parser.add_argument(
-        "--host",
-        default=runtime.host,
-        help="Host for HTTP-based modes (sse/streamable-http).",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=runtime.port,
-        help="Port for HTTP-based modes (sse/streamable-http).",
-    )
-    parser.add_argument(
-        "--log-level",
-        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
-        default=runtime.log_level,
-        help="Runtime log level for FastMCP HTTP transports.",
-    )
-    parser.add_argument(
-        "--mount-path",
-        default=runtime.mount_path,
-        help="Mount path when running in SSE mode.",
-    )
-    parser.add_argument(
-        "--json-response",
-        action="store_true",
-        default=runtime.json_response,
-        help="Enable JSON response mode in FastMCP HTTP transport.",
-    )
-    parser.add_argument(
-        "--stateless-http",
-        action="store_true",
-        default=runtime.stateless_http,
-        help="Enable stateless HTTP mode (streamable-http).",
-    )
-    parser.add_argument(
-        "--print-profile",
-        action="store_true",
-        help="Print nanobot integration profile JSON and exit.",
-    )
-    parser.add_argument(
-        "--allow-remote-http",
-        action="store_true",
-        default=runtime.allow_remote_http,
-        help="Allow HTTP transports to bind on non-loopback hosts.",
-    )
-    parser.add_argument(
-        "--allow-unauthenticated-loopback-http",
-        action="store_true",
-        default=runtime.allow_unauthenticated_loopback_http,
-        help="Allow loopback HTTP transports without bearer auth token (unsafe; local dev only).",
-    )
-    parser.add_argument(
-        "--auth-token-env",
-        default=runtime.auth_token_env,
-        help="Environment variable containing bearer token for HTTP transport authentication.",
-    )
-    return parser
-
-
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = _build_arg_parser()
+    parser = argparse.ArgumentParser(description="Percival Vision MCP Server (Async)")
+    parser.add_argument("--mode", choices=("stdio", "sse", "streamable-http"), default="stdio")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--log-level", default="INFO")
+    parser.add_argument("--mount-path", default="/")
+    parser.add_argument("--print-profile", action="store_true")
+
     args = parser.parse_args(argv)
 
-    if args.port < 1 or args.port > 65535:
-        raise SystemExit("Invalid --port. Must be between 1 and 65535.")
-
     if args.print_profile:
-        payload = {
+        print(json.dumps({
             "server": SERVER_NAME,
             "contract_version": CONTRACT_VERSION,
-            "profile": build_nanobot_profile(),
-        }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+            "profile": build_nanobot_profile()
+        }, indent=2))
         return
 
-    auth_token_raw = os.getenv(args.auth_token_env, "").strip()
-    auth_token = auth_token_raw or None
-
-    try:
-        _validate_http_runtime_security(
-            mode=args.mode,
-            host=args.host,
-            allow_remote_http=args.allow_remote_http,
-            allow_unauthenticated_loopback_http=args.allow_unauthenticated_loopback_http,
-            auth_token=auth_token,
-            auth_token_env=args.auth_token_env,
-        )
-    except ValueError as exc:
-        raise SystemExit(str(exc))
-
-    runtime_info = configure_runtime_settings(
+    # Basic setup
+    logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(levelname)s: %(message)s")
+    
+    configure_runtime_settings(
         host=args.host,
         port=args.port,
         log_level=args.log_level,
-        json_response=args.json_response,
-        stateless_http=args.stateless_http,
-        mount_path=args.mount_path,
+        mount_path=args.mount_path
     )
-    rollout = load_rollout_config()
-    print(
-        "[mcp-startup] "
-        f"server={runtime_info['server']} "
-        f"mode={args.mode} "
-        f"host={runtime_info['host']} "
-        f"port={runtime_info['port']} "
-        f"log_level={runtime_info['log_level']} "
-        f"contract={CONTRACT_VERSION} "
-        f"auth_enabled={bool(auth_token)} "
-        f"rollout_track={rollout.rollout_track} "
-        f"working_dir_mode={rollout.working_dir_mode}"
-    )
+
+    token = os.getenv("PERCIVAL_VISION_MCP_AUTH_TOKEN")
+    
+    logger.info(f"Starting {SERVER_NAME} in {args.mode} mode...")
+    logger.info(f"Base URL: {JARVINA_BASE_URL} | Model: {JARVINA_VISION_MODEL}")
 
     if args.mode == "stdio":
-        mcp.run(transport=args.mode)
-        return
-
-    asyncio.run(
-        _run_http_transport(
-            mode=args.mode,
-            host=args.host,
-            port=args.port,
-            log_level=args.log_level,
-            mount_path=args.mount_path,
-            auth_token=auth_token,
-        )
-    )
-
+        mcp.run(transport="stdio")
+    else:
+        asyncio.run(_run_http_transport(args.mode, args.host, args.port, args.log_level, args.mount_path, token))
 
 if __name__ == "__main__":
     main()

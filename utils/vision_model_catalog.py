@@ -7,8 +7,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
-CATALOG_SCHEMA_VERSION = "2.0"
-SUPPORTED_SCHEMA_VERSIONS = {"1.0", "2.0"}
+CATALOG_SCHEMA_VERSION = "2.1"
+SUPPORTED_SCHEMA_VERSIONS = {"1.0", "2.0", "2.1"}
 SUPPORTED_TASK_TYPES = {
     "general_vision",
     "ocr",
@@ -317,6 +317,7 @@ def _migrate_catalog(raw_catalog: dict[str, Any]) -> dict[str, Any]:
         "schema_version": CATALOG_SCHEMA_VERSION,
         "provider": str(raw_catalog.get("provider") or "venice.ai"),
         "catalog_version": str(raw_catalog.get("catalog_version") or "unknown"),
+        "strategy": str(raw_catalog.get("strategy") or "default"),
         "last_updated": str(raw_catalog.get("last_updated") or raw_catalog.get("catalog_version") or "unknown"),
         "default_task_type": _normalize_task_type(str(raw_catalog.get("default_task_type") or "general_vision")),
         "supported_task_types": [

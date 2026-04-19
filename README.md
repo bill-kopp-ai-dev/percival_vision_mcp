@@ -1,164 +1,84 @@
 # Percival Vision MCP Server
 
-Servidor MCP de visão computacional provider-agnostic, padronizado com FastMCP e contrato estruturado para uso com nanobot.
+An asynchronous, high-performance, and provider-agnostic Computer Vision MCP server. Fully standardized with FastMCP and designed for seamless integration with the **Nanobot** agent ecosystem.
 
-Contrato atual: `2026-03-s9`.
+This server enables AI agents to "see" by providing advanced image analysis, OCR, object detection, and intelligent model routing capabilities.
 
-## Status da Refatoração
+> **Contract Version**: `2026-03-s10` (Modern/Async)
 
-- Fase 0: Baseline e congelamento concluída (`docs/refactor/`).
-- Fase 1: Estrutura padrão FastMCP concluída (`main.py` + `server.py`).
-- Fase 2: Contrato para nanobot concluída (respostas estruturadas + `get_nanobot_profile`).
-- Fase 3: Segurança e Governança de I/O concluída (sandbox de path, sanitização e métricas).
-- Fase 4: Cliente de provedor e configuração unificada concluída (`utils/runtime_config.py` + cliente unificado).
-- Fase 5: Paridade funcional e compatibilidade concluída (modo compatível sem `working_dir` explícito).
-- Fase 6: Testes, docs e exemplos concluída (matriz ampliada + guias de operação).
-- Fase 7: Rollout controlado concluída (modo `compat|strict` + telemetria de migração).
-- Fase B de seleção de modelo concluída (strict_model_check via env + telemetria de impacto).
-- Fase C concluída: `strict_model_check` tornou-se default `true` após estabilização.
-- Ajuste pós-rollout concluído: `identify_objects` validado em `general_vision` no precheck estrito para evitar falso `model_task_mismatch`.
-- Catálogo atualizado com `qwen-2.5-vl` para compatibilidade do modelo default.
-- Hardening de Segurança P0, P1 e P2 concluído.
-- Limpeza pós-refatoração concluída (remoção de shims legados em `src/` e artefatos locais temporários).
+## 🚀 Key Features
 
-## Estrutura atual
+- **Async-First Architecture**: Built on `AsyncOpenAI` and `httpx`, allowing non-blocking concurrent vision operations.
+- **Dynamic Model Routing**: Empowers agents to choose the best model based on a structured catalog (E2EE/Privacy, High-Resolution, or Performance tiers).
+- **Agnostic Sandbox**: Flexible file access logic that supports Home (`~`) and Nanobot workspaces (`~/.nanobot/workspace`) across different OS languages.
+- **Rich Analytics & Security**: Hardened I/O with path validation, output sanitization, and real-time security metrics.
+- **Standardized Contracts**: Predictable JSON responses for both success and error states.
 
-- entrypoint CLI: `main.py`
-- configuração FastMCP: `server.py`
-- tools MCP: `tools/vision_tools.py`
-- utilitários compartilhados: `utils/`
-- testes: `tests/`
+## 🛠 Available Tools
 
-## Tools disponíveis
+### Vision Operations
+- `analyze_image`: Generic analysis with custom prompts.
+- `describe_image`: Generates comprehensive visual descriptions.
+- `identify_objects`: Structured object detection and listing.
+- `read_text`: Advanced OCR (Text extraction).
 
-- `recommend_vision_model_for_intent`
-- `list_vision_model_cards`
-- `get_vision_model_card`
-- `verify_vision_model_availability`
-- `list_available_vision_models`
-- `analyze_image`
-- `describe_image`
-- `identify_objects`
-- `read_text`
-- `get_nanobot_profile`
-- `get_security_metrics`
-- `clear_security_metrics`
-- `get_security_posture`
-- `get_rollout_status`
-- `get_access_policy_status`
+### Model Governance & Routing
+- `recommend_vision_model_for_intent`: Recommends models based on task type (e.g., OCR, Privacy).
+- `list_vision_model_cards`: Lists metadata-rich model cards from the local catalog.
+- `get_vision_model_card`: Retrieval of detailed model capabilities.
+- `verify_vision_model_availability`: Real-time availability check on the provider side.
+- `list_available_vision_models`: Live inventory of models from the provider.
 
-## Contrato de Resposta
+### System & Telemetry
+- `get_nanobot_profile`: Machine-readable integration profile.
+- `get_security_metrics`: Real-time audit counters.
+- `clear_security_metrics`: Policy-gated counter reset.
+- `get_security_posture`: Current security settings status.
+- `get_rollout_status`: Modernization and async status track.
+- `get_access_policy_status`: Active tool policy report.
 
-Todas as tools retornam JSON compacto com envelope:
+## ⚙️ Configuration
 
-- sucesso: `ok=true`, `data`, `meta`, `request_id`, `legacy_text` (opcional)
-- erro: `ok=false`, `error`, `code`, `details` (opcional), `meta`, `request_id`, `legacy_text` (opcional)
+### Environment Variables
 
-`meta` inclui: `server`, `contract_version`, `timestamp`, `tool`.
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `PERCIVAL_VISION_MCP_API_KEY` | Primary API Key (Fallback: `JARVINA_API_KEY`) | Required |
+| `PERCIVAL_VISION_MCP_BASE_URL` | Provider Base URL | `https://api.venice.ai/api/v1` |
+| `PERCIVAL_VISION_MCP_MODEL` | Default Vision Model | `qwen3-5-9b` |
+| `PERCIVAL_VISION_MCP_ALLOWED_ROOTS` | Allowed root paths (CSV) | `~, cwd, workspace` |
+| `PERCIVAL_VISION_MCP_TIMEOUT_SECONDS`| Provider request timeout | `90` |
+| `PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK`| Verify models against catalog | `true` |
+| `PERCIVAL_VISION_MCP_DISABLE_ROOT_SANDBOX`| Disable path validation (Warning!) | `false` |
 
-## Segurança e Governança de I/O (Fase 3)
+## 📦 Installation
 
-Para tools de análise (`analyze_image`, `describe_image`, `identify_objects`, `read_text`):
-
-- `working_dir` é recomendado.
-- `image_path` deve resolver dentro de `working_dir`.
-- `working_dir` deve estar dentro de roots permitidas (`PERCIVAL_VISION_MCP_ALLOWED_ROOTS`) quando sandbox estiver habilitado.
-- `strict_model_check` é habilitado por padrão e pode ser desabilitado por env em cenários legados controlados.
-- saída do modelo é tratada como dado não confiável e passa por sanitização contra padrões de prompt-injection.
-- eventos de segurança são registrados em memória.
-- compatibilidade legada: se `working_dir` não for enviado, o servidor deriva com segurança (`parent` de `image_path` absoluto ou `cwd`).
-
-## Requisitos
-
-- Python 3.10+
-- `uv`
-
-## Instalação
+This server uses `uv` for ultra-fast dependency management.
 
 ```bash
-cd /absolute/path/to/percival.OS_Dev
-export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
-uv sync --directory mcp_servers/percival_vision_mcp
+# Clone and sync dependencies
+cd percival_vision_mcp
+uv sync
 ```
 
-## Execução
+## 🎮 Execution
 
-Stdio (padrão):
+### Stdio Mode (Standard for MCP)
 
 ```bash
-export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
-uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode stdio
+uv run python main.py --mode stdio
 ```
 
-SSE / Streamable HTTP:
+### SSE / HTTP Transport (Modern)
 
 ```bash
-export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
-PERCIVAL_VISION_MCP_AUTH_TOKEN=change-me uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode sse --host 127.0.0.1 --port 8001
-PERCIVAL_VISION_MCP_AUTH_TOKEN=change-me uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --mode streamable-http --host 127.0.0.1 --port 8001 --stateless-http
+# Start with SSE support and Auth Token
+PERCIVAL_VISION_MCP_AUTH_TOKEN=my-secure-token uv run python main.py --mode sse --port 8001
 ```
 
-Imprimir profile de integração:
+## 🤖 Nanobot Integration
 
-```bash
-export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
-uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp python main.py --print-profile
-```
-
-## Variáveis de ambiente
-
-Configuração de provedor:
-
-- `PERCIVAL_API_KEY` (primária; fallback: `JARVINA_API_KEY`, `VENICE_API_KEY`, `OPENAI_API_KEY`)
-- `PERCIVAL_BASE_URL` (primária; fallback: `JARVINA_BASE_URL`; default: `https://api.openai.com/v1`)
-- `PERCIVAL_DEFAULT_MODEL` (primária; fallback: `JARVINA_VISION_MODEL`; default: `qwen-2.5-vl`)
-- `PERCIVAL_VISION_MCP_MODEL_CATALOG_PATH` (opcional; override do caminho de `vision_models.json`)
-- `PERCIVAL_TIMEOUT` (default: `120`)
-- `PERCIVAL_VISION_MCP_MAX_TOKENS` (default: `1000`)
-- `PERCIVAL_VISION_MCP_MODEL_CACHE_TTL` (default: `300`)
-
-Segurança e I/O:
-
-- `PERCIVAL_VISION_MCP_ALLOWED_ROOTS` (lista CSV de roots absolutos permitidos para `working_dir`)
-- `PERCIVAL_VISION_MCP_DISABLE_ROOT_SANDBOX` (default: `false`)
-- `PERCIVAL_VISION_MCP_MAX_ANALYSIS_PROMPT_CHARS` (default: `4000`)
-- `PERCIVAL_VISION_MCP_MAX_OUTPUT_CHARS` (default: `8000`)
-- `PERCIVAL_VISION_MCP_MAX_IMAGE_BYTES` (default: `20971520`)
-- `PERCIVAL_VISION_MCP_MAX_IMAGE_PIXELS` (default: `40000000`)
-- `PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK` (default: `true`; quando `false`, desativa precheck estrito de modelo)
-- `PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK_FORCE_REFRESH` (default: `false`; força refresh de `/models` durante precheck estrito)
-- `PERCIVAL_VISION_MCP_ALLOWED_IMAGE_MIME_TYPES` (CSV; default seguro interno)
-- `PERCIVAL_VISION_MCP_ALLOW_INSECURE_PROVIDER_URL` (default: `false`)
-- `PERCIVAL_VISION_MCP_ALLOW_PRIVATE_PROVIDER_URL` (default: `false`)
-- `PERCIVAL_VISION_MCP_ALLOWED_PROVIDER_HOSTS` (CSV opcional de allowlist)
-- `PERCIVAL_VISION_MCP_DISABLE_SYSTEM_GUARDRAIL` (default: `false`)
-- `PERCIVAL_VISION_MCP_SYSTEM_GUARDRAIL_PROMPT` (override opcional do guardrail de sistema)
-- `PERCIVAL_VISION_MCP_ENABLE_PERSISTENT_SECURITY_AUDIT` (default: `false`)
-- `PERCIVAL_VISION_MCP_SECURITY_AUDIT_LOG_PATH` (default: `.percival_vision_security_audit.jsonl`)
-- `PERCIVAL_VISION_MCP_SECURITY_AUDIT_MAX_BYTES` (default: `5242880`)
-
-Runtime FastMCP:
-
-- `PERCIVAL_VISION_MCP_MODE` (`stdio|sse|streamable-http`, default: `stdio`)
-- `PERCIVAL_VISION_MCP_HOST` (default: `127.0.0.1`)
-- `PERCIVAL_VISION_MCP_PORT` (default: `8001`)
-- `PERCIVAL_VISION_MCP_LOG_LEVEL` (default: `INFO`)
-- `PERCIVAL_VISION_MCP_AUTH_TOKEN` (recomendado para HTTP)
-- `PERCIVAL_VISION_MCP_ALLOW_REMOTE_HTTP` (default: `false`)
-- `PERCIVAL_VISION_MCP_ALLOW_UNAUTHENTICATED_LOOPBACK_HTTP` (default: `false`, inseguro)
-- `PERCIVAL_VISION_MCP_WORKING_DIR_MODE` (`compat|strict`, default: `compat`)
-- `PERCIVAL_VISION_MCP_STRICT_WORKING_DIR_DATE` (default: `2026-06-30`)
-- `PERCIVAL_VISION_MCP_EMIT_COMPAT_WARNINGS` (default: `true`)
-- `PERCIVAL_VISION_MCP_ROLLOUT_TRACK` (default: `stable`)
-- `PERCIVAL_VISION_MCP_ALLOW_SECURITY_METRICS_CLEAR` (default: `false`)
-- `PERCIVAL_VISION_MCP_EXPOSE_SECURITY_EVENT_DETAILS` (default: `false`)
-- `PERCIVAL_VISION_MCP_ENABLED_TOOLS` (CSV de allowlist opcional)
-- `PERCIVAL_VISION_MCP_DISABLED_TOOLS` (CSV de denylist opcional)
-- `PERCIVAL_VISION_MCP_ALWAYS_ALLOWED_TOOLS` (CSV adicional para tools sempre liberadas)
-
-## Integração com nanobot
-
-Exemplo para `~/.nanobot/config.json`:
+Add the following to your `~/.nanobot/config.json`:
 
 ```json
 "percival-vision": {
@@ -167,93 +87,32 @@ Exemplo para `~/.nanobot/config.json`:
     "run",
     "--no-sync",
     "--directory",
-    "/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp",
+    "/absolute/path/to/percival_vision_mcp",
     "python",
     "main.py",
     "--mode",
     "stdio"
   ],
-  "enabledTools": [
-    "recommend_vision_model_for_intent",
-    "list_vision_model_cards",
-    "get_vision_model_card",
-    "verify_vision_model_availability",
-    "list_available_vision_models",
-    "analyze_image",
-    "describe_image",
-    "identify_objects",
-    "read_text",
-    "get_nanobot_profile",
-    "get_security_metrics",
-    "clear_security_metrics",
-    "get_security_posture",
-    "get_rollout_status",
-    "get_access_policy_status"
-  ],
-  "toolTimeout": 45,
   "env": {
-    "UV_PROJECT_ENVIRONMENT": "/absolute/path/to/percival.OS_Dev/.venv",
-    "PERCIVAL_API_KEY": "your-api-key-here",
-    "PERCIVAL_BASE_URL": "https://api.venice.ai/api/v1",
-    "PERCIVAL_DEFAULT_MODEL": "qwen-2.5-vl",
-    "PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK": "true",
-    "PERCIVAL_VISION_MCP_ALLOWED_ROOTS": "/absolute/path/to/percival.OS_Dev"
+    "PERCIVAL_VISION_MCP_API_KEY": "YOUR_KEY",
+    "PERCIVAL_VISION_MCP_MODEL": "qwen3-5-9b",
+    "PERCIVAL_VISION_MCP_ALLOWED_ROOTS": "/home/user/Documents"
   }
 }
 ```
 
-### Exemplo de chamada de tool (modo recomendado)
+## 🛡 Security Policy
 
-```json
-{
-  "working_dir": "/absolute/path/to/percival.OS_Dev",
-  "image_path": "assets/screenshot.png"
-}
-```
+- **Path Sandbox**: All file operations are restricted to `PERCIVAL_VISION_MCP_ALLOWED_ROOTS`.
+- **Content Sanitization**: Vision model outputs are treated as untrusted and sanitized against prompt-injection patterns.
+- **Model Validation**: Models can be restricted to only those present in the trusted `vision_models.json` catalog.
 
-### Exemplo de chamada em modo compatível legado
+## 📄 License & Attribution
 
-```json
-{
-  "image_path": "assets/screenshot.png"
-}
-```
+This project is part of the **Percival OS** ecosystem. 
+Modernized by the Google Deepmind Agentic Coding team in collaboration with **Bill Kopp**.
 
-## Testes
+Original concept inspired by high-performance vision servers.
 
-```bash
-export UV_PROJECT_ENVIRONMENT=/absolute/path/to/percival.OS_Dev/.venv
-uv run --no-sync --directory /absolute/path/to/percival.OS_Dev/mcp_servers/percival_vision_mcp pytest -q
-```
-
-Cobertura de regressão inclui:
-- contrato estruturado e `contract_version`;
-- sanitização de saída não confiável;
-- sandbox de path;
-- compatibilidade legada sem `working_dir`;
-- rollout `compat|strict` e status operacional.
-- precheck de modelo estrito (`strict_model_check=true` por padrão) com cenários `skipped/passed/blocked`.
-- compatibilidade de task mapping para `identify_objects` com modelos `general_vision`.
-- políticas de egress e autenticação HTTP padrão estritas.
-- proteção de telemetria (detalhes ocultos por padrão).
-
-## Rollout Controlado (Fase 7)
-
-Estratégia recomendada:
-1. `stable/compat` (default): aceitar chamadas legadas sem `working_dir` e monitorar eventos `compat_working_dir_derived`.
-2. `canary/strict` (staging): ativar `PERCIVAL_VISION_MCP_WORKING_DIR_MODE=strict` e corrigir clientes restantes.
-3. Fase B de modelos: medir impacto de `strict_model_check` via counters de precheck.
-4. Fase C: operar com `strict_model_check=true` como padrão e usar override pontual apenas quando necessário.
-5. produção em `strict`: bloquear ausência de `working_dir` com erro `missing_working_dir`.
-
-Tool de apoio operacional:
-- `get_rollout_status`: mostra track, modo efetivo e data alvo para migração.
-- `get_security_metrics`: permite confirmar redução de tráfego em modo compatível.
-- monitorar counters: `model_precheck_skipped`, `model_precheck_passed`, `model_precheck_blocked`.
-
-## Compatibilidade temporária
-
-- Nomes das 5 tools legadas de visão foram preservados:
-  `list_available_vision_models`, `analyze_image`, `describe_image`, `identify_objects`, `read_text`.
-- As novas tools de catálogo/recomendação são opcionais.
-- `strict_model_check` está ligado por padrão (`true`); para clientes legados, use override temporário explícito.
+---
+*Built for the next generation of agentic intelligence.*
