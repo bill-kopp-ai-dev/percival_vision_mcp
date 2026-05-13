@@ -1,6 +1,6 @@
 # 🤖 Percival Vision - percival.OS MCP
 
-**Version 0.0.2**
+**Version 0.0.3**
 
 [![Python](https://img.shields.io/badge/python-3.10+-yellow.svg)]()
 [![MCP](https://img.shields.io/badge/mcp-server-blue.svg)]()
@@ -18,7 +18,7 @@ Like all components of `percival.OS`, this MCP server strictly follows our core 
 
 - **Privacy & Governance**: You have full control over which vision models are used and which image directories are accessible.
 - **Data Sovereignty**: Visual analysis processing is done under your API keys, and the results remain in your infrastructure.
-- **Hardened Security**: We implement a strict path sandbox, vision model output sanitization (treated as untrusted content), and security telemetry.
+- **Hardened Security**: We implement a flexible path sandbox (allowing access within all authorized roots), vision model output sanitization (treated as untrusted content), and security telemetry.
 - **Transparency**: Open-source and auditable, with stable contracts to ensure the integrity of agent operations.
 
 ---

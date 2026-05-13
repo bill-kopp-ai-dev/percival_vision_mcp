@@ -30,6 +30,27 @@
       ]
     },
     {
+      "id": "qwen3-5-9b",
+      "name": "Qwen 3 5 9B",
+      "developer": "Alibaba Cloud",
+      "description": "Fast and efficient vision-language model optimized for general purpose visual understanding.",
+      "capabilities": {
+        "text_input": true,
+        "vision_input": true,
+        "privacy_tier": "standard"
+      },
+      "cost_estimation": "low",
+      "recommended_use_cases": [
+        "general_vision_tasks",
+        "quick_analysis",
+        "mobile_friendly_vision"
+      ],
+      "avoid_use_cases": [
+        "complex_scientific_imaging",
+        "dense_multipage_ocr"
+      ]
+    },
+    {
       "id": "qwen3-vl-235b-a22b",
       "name": "Qwen 3 VL 235B",
       "developer": "Alibaba Cloud",

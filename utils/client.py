@@ -122,7 +122,7 @@ async def run_vision_request(
         response = await client.chat.completions.create(
             model=target_model,
             messages=messages,
-            max_tokens=max_tokens or 2048
+            max_tokens=max_tokens or 1024
         )
         
         content = response.choices[0].message.content

@@ -89,10 +89,9 @@ def validate_image_path(image_path: str, working_dir: Path) -> tuple[Path, Optio
     if not path.is_file():
         return path, "Path must reference a file."
 
-    # Entailment check: must be inside working_dir
-    try:
-        path.relative_to(working_dir)
-    except ValueError:
-        return path, "Image path is outside the validated working_dir (jailbreak attempt blocked)."
+    # Entailment check: must be inside one of the allowed roots
+    allowed_roots = get_allowed_working_roots()
+    if not any(str(path).startswith(str(root)) for root in allowed_roots):
+        return path, "Image path is outside allowed roots (jailbreak attempt blocked)."
 
     return path, None
