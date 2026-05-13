@@ -11,7 +11,6 @@ from server import configure_runtime_settings, mcp
 from utils.nanobot_profile import CONTRACT_VERSION, SERVER_NAME, build_nanobot_profile
 from utils.config import JARVINA_BASE_URL, JARVINA_VISION_MODEL
 
-from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse

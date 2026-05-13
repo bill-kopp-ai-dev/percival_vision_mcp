@@ -1,118 +1,98 @@
-# Percival Vision MCP Server
+# 🤖 Percival Vision - percival.OS MCP
 
-An asynchronous, high-performance, and provider-agnostic Computer Vision MCP server. Fully standardized with FastMCP and designed for seamless integration with the **Nanobot** agent ecosystem.
+**Version 0.0.2**
 
-This server enables AI agents to "see" by providing advanced image analysis, OCR, object detection, and intelligent model routing capabilities.
+[![Python](https://img.shields.io/badge/python-3.10+-yellow.svg)]()
+[![MCP](https://img.shields.io/badge/mcp-server-blue.svg)]()
+[![percival.OS](https://img.shields.io/badge/percival.OS-ecosystem-orange.svg)](https://github.com/bill-kopp-ai-dev/percival.OS)
 
-> **Contract Version**: `2026-03-s10` (Modern/Async)
+## 📋 Description
+**Percival Vision** is an asynchronous, high-performance, and provider-agnostic Computer Vision MCP server. Designed for seamless integration with Nanobot, it enables AI agents to "see" by providing advanced image analysis, OCR, and object detection.
 
-## 🚀 Key Features
+This server is part of the **percival.OS** ecosystem, a Personal Agentic Operating System designed for autonomy, security, and absolute privacy.
 
-- **Async-First Architecture**: Built on `AsyncOpenAI` and `httpx`, allowing non-blocking concurrent vision operations.
-- **Dynamic Model Routing**: Empowers agents to choose the best model based on a structured catalog (E2EE/Privacy, High-Resolution, or Performance tiers).
-- **Agnostic Sandbox**: Flexible file access logic that supports Home (`~`) and Nanobot workspaces (`~/.nanobot/workspace`) across different OS languages.
-- **Rich Analytics & Security**: Hardened I/O with path validation, output sanitization, and real-time security metrics.
-- **Standardized Contracts**: Predictable JSON responses for both success and error states.
+---
 
-## 🛠 Available Tools
+## 🛡️ percival.OS Principles
+Like all components of `percival.OS`, this MCP server strictly follows our core principles:
+
+- **Privacy & Governance**: You have full control over which vision models are used and which image directories are accessible.
+- **Data Sovereignty**: Visual analysis processing is done under your API keys, and the results remain in your infrastructure.
+- **Hardened Security**: We implement a strict path sandbox, vision model output sanitization (treated as untrusted content), and security telemetry.
+- **Transparency**: Open-source and auditable, with stable contracts to ensure the integrity of agent operations.
+
+---
+
+## 🚀 Features & Tools
 
 ### Vision Operations
-- `analyze_image`: Generic analysis with custom prompts.
-- `describe_image`: Generates comprehensive visual descriptions.
-- `identify_objects`: Structured object detection and listing.
-- `read_text`: Advanced OCR (Text extraction).
+- `vision_analyze`: Generic analysis with custom prompts.
+- `vision_describe`: Generates comprehensive visual descriptions.
+- `vision_identify`: Structured object detection and listing.
+- `vision_read_text`: Advanced OCR (Text extraction).
 
-### Model Governance & Routing
-- `recommend_vision_model_for_intent`: Recommends models based on task type (e.g., OCR, Privacy).
-- `list_vision_model_cards`: Lists metadata-rich model cards from the local catalog.
-- `get_vision_model_card`: Retrieval of detailed model capabilities.
-- `verify_vision_model_availability`: Real-time availability check on the provider side.
-- `list_available_vision_models`: Live inventory of models from the provider.
+### Model Governance
+- `vision_recommend_model`: Recommends models based on task type.
+- `vision_list_models`: Lists metadata-rich model cards from the local catalog.
+- `vision_get_model_availability`: Real-time availability check on the provider side.
 
 ### System & Telemetry
-- `get_nanobot_profile`: Machine-readable integration profile.
-- `get_security_metrics`: Real-time audit counters.
-- `clear_security_metrics`: Policy-gated counter reset.
-- `get_security_posture`: Current security settings status.
-- `get_rollout_status`: Modernization and async status track.
-- `get_access_policy_status`: Active tool policy report.
+- `vision_get_status`: Returns server operational status.
+- `vision_get_security_posture`: Inspects current security settings.
+- `vision_get_security_metrics`: Real-time audit counters.
 
-## ⚙️ Configuration
+---
 
-### Environment Variables
-
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `PERCIVAL_VISION_MCP_API_KEY` | Primary API Key (Fallback: `JARVINA_API_KEY`) | Required |
-| `PERCIVAL_VISION_MCP_BASE_URL` | Provider Base URL | `https://api.venice.ai/api/v1` |
-| `PERCIVAL_VISION_MCP_MODEL` | Default Vision Model | `qwen3-5-9b` |
-| `PERCIVAL_VISION_MCP_ALLOWED_ROOTS` | Allowed root paths (CSV) | `~, cwd, workspace` |
-| `PERCIVAL_VISION_MCP_TIMEOUT_SECONDS`| Provider request timeout | `90` |
-| `PERCIVAL_VISION_MCP_STRICT_MODEL_CHECK`| Verify models against catalog | `true` |
-| `PERCIVAL_VISION_MCP_DISABLE_ROOT_SANDBOX`| Disable path validation (Warning!) | `false` |
-
-## 📦 Installation
-
-This server uses `uv` for ultra-fast dependency management.
-
-```bash
-# Clone and sync dependencies
-cd percival_vision_mcp
-uv sync
-```
-
-## 🎮 Execution
-
-### Stdio Mode (Standard for MCP)
-
-```bash
-uv run python main.py --mode stdio
-```
-
-### SSE / HTTP Transport (Modern)
-
-```bash
-# Start with SSE support and Auth Token
-PERCIVAL_VISION_MCP_AUTH_TOKEN=my-secure-token uv run python main.py --mode sse --port 8001
-```
-
-## 🤖 Nanobot Integration
-
-Add the following to your `~/.nanobot/config.json`:
+## ⚙️ Configuration in percival.OS (Nanobot)
+Add the following configuration to your `~/.nanobot/config.json`:
 
 ```json
-"percival-vision": {
-  "command": "uv",
-  "args": [
-    "run",
-    "--no-sync",
-    "--directory",
-    "/absolute/path/to/percival_vision_mcp",
-    "python",
-    "main.py",
-    "--mode",
-    "stdio"
-  ],
-  "env": {
-    "PERCIVAL_VISION_MCP_API_KEY": "YOUR_KEY",
-    "PERCIVAL_VISION_MCP_MODEL": "qwen3-5-9b",
-    "PERCIVAL_VISION_MCP_ALLOWED_ROOTS": "/home/user/Documents"
+{
+  "tools": {
+    "mcpServers": {
+      "percival-vision": {
+        "command": "uv",
+        "args": [
+          "run",
+          "--no-sync",
+          "--directory",
+          "/path/to/percival_vision_mcp",
+          "python",
+          "main.py",
+          "--mode",
+          "stdio"
+        ],
+        "env": {
+          "PERCIVAL_VISION_MCP_API_KEY": "YOUR_KEY",
+          "PERCIVAL_VISION_MCP_MODEL": "qwen3-5-9b",
+          "PERCIVAL_VISION_MCP_ALLOWED_ROOTS": "/home/user/Pictures"
+        }
+      }
+    }
   }
 }
 ```
 
-## 🛡 Security Policy
+---
 
-- **Path Sandbox**: All file operations are restricted to `PERCIVAL_VISION_MCP_ALLOWED_ROOTS`.
-- **Content Sanitization**: Vision model outputs are treated as untrusted and sanitized against prompt-injection patterns.
-- **Model Validation**: Models can be restricted to only those present in the trusted `vision_models.json` catalog.
+## 🛠️ Development & Testing
+This project uses `uv` for dependency management.
 
-## 📄 License & Attribution
+```bash
+# Sync environment
+uv sync
 
-This project is part of the **Percival OS** ecosystem. 
-Modernized by the Google Deepmind Agentic Coding team in collaboration with **Bill Kopp**.
-
-Original concept inspired by high-performance vision servers.
+# Run in stdio mode
+uv run python main.py --mode stdio
+```
 
 ---
-*Built for the next generation of agentic intelligence.*
+
+## 📚 About the Project
+This server is an integral module of the **percival.OS** project. It provides the "eyes" for Nanobot, allowing advanced visual understanding.
+
+- **Main Repository**: [https://github.com/bill-kopp-ai-dev/percival.OS](https://github.com/bill-kopp-ai-dev/percival.OS)
+- **License**: MIT
+
+---
+*Developed with ❤️ by the percival.OS Team*

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from server import mcp
 from utils.client import run_vision_request, get_client
@@ -17,9 +15,7 @@ from utils.security_utils import (
 )
 from utils.vision_model_catalog import (
     get_model_card as catalog_get_model_card,
-    list_model_cards as catalog_list_model_cards,
-    find_alternatives as catalog_find_alternatives,
-    normalize_task_type
+    list_model_cards as catalog_list_model_cards
 )
 
 # Constants
@@ -96,7 +92,7 @@ async def _analyze_flow(
 
 # --- Tools ---
 
-@mcp.tool()
+@mcp.tool("vision_analyze")
 async def analyze_image(
     image_path: str,
     working_dir: Optional[str] = None,
@@ -115,7 +111,7 @@ async def analyze_image(
         request_id=new_request_id("analyze")
     )
 
-@mcp.tool()
+@mcp.tool("vision_describe")
 async def describe_image(
     image_path: str,
     working_dir: Optional[str] = None,
@@ -133,7 +129,7 @@ async def describe_image(
         request_id=new_request_id("describe")
     )
 
-@mcp.tool()
+@mcp.tool("vision_identify")
 async def identify_objects(
     image_path: str,
     working_dir: Optional[str] = None,
@@ -151,7 +147,7 @@ async def identify_objects(
         request_id=new_request_id("objects")
     )
 
-@mcp.tool()
+@mcp.tool("vision_read_text")
 async def read_text(
     image_path: str,
     working_dir: Optional[str] = None,
@@ -169,7 +165,7 @@ async def read_text(
         request_id=new_request_id("ocr")
     )
 
-@mcp.tool()
+@mcp.tool("vision_list_provider_models")
 async def list_available_vision_models(force_refresh: bool = False) -> str:
     """List vision models available directly from the provider (Async)."""
     try:
@@ -180,7 +176,7 @@ async def list_available_vision_models(force_refresh: bool = False) -> str:
     except Exception as e:
         return error_response(str(e), code="list_models_failed")
 
-@mcp.tool()
+@mcp.tool("vision_list_models")
 async def list_vision_model_cards(task_type: Optional[str] = None) -> str:
     """List structured model cards for vision tasks from local catalog."""
     try:
@@ -189,7 +185,7 @@ async def list_vision_model_cards(task_type: Optional[str] = None) -> str:
     except Exception as e:
         return error_response(str(e), code="catalog_error")
 
-@mcp.tool()
+@mcp.tool("vision_get_model")
 async def get_vision_model_card(model_id: str) -> str:
     """Get a detailed model card by ID."""
     card = catalog_get_model_card(model_id)
@@ -197,25 +193,25 @@ async def get_vision_model_card(model_id: str) -> str:
         return error_response(f"Model '{model_id}' not found in catalog.", code="model_not_found")
     return success_response(data={"model": card}, tool_name="get_vision_model_card")
 
-@mcp.tool()
+@mcp.tool("vision_get_security_metrics")
 async def get_security_metrics() -> str:
     """Return in-memory security counters."""
     return success_response(data=get_security_metrics_snapshot(), tool_name="get_security_metrics")
 
-@mcp.tool()
+@mcp.tool("vision_clear_security_metrics")
 async def clear_security_metrics() -> str:
     """Reset security counters."""
     cleared = clear_security_metrics_snapshot()
     return success_response(data={"cleared": cleared}, tool_name="clear_security_metrics")
 
-@mcp.tool()
+@mcp.tool("vision_get_contract_info")
 async def get_nanobot_profile() -> str:
     """Return machine-readable integration profile for nanobot."""
     from utils.nanobot_profile import build_nanobot_profile
     profile = build_nanobot_profile()
     return success_response(data={"profile": profile}, tool_name="get_nanobot_profile")
 
-@mcp.tool()
+@mcp.tool("vision_get_model_availability")
 async def verify_vision_model_availability(model_id: str, task_type: str = "general_vision") -> str:
     """Verify if a model is available in the provider and catalog."""
     from utils.client import get_client
@@ -234,7 +230,7 @@ async def verify_vision_model_availability(model_id: str, task_type: str = "gene
     except Exception as e:
         return error_response(str(e))
 
-@mcp.tool()
+@mcp.tool("vision_recommend_model")
 async def recommend_vision_model_for_intent(intent: str, task_type: str = "general_vision") -> str:
     """Recommend a model based on user intent and task type."""
     # Simple recommendation logic based on catalog
@@ -246,7 +242,7 @@ async def recommend_vision_model_for_intent(intent: str, task_type: str = "gener
     recommendation = next((c for c in cards if c.get("quality_tier") in ["pro", "premium"]), cards[0])
     return success_response(data={"recommendation": recommendation, "intent": intent})
 
-@mcp.tool()
+@mcp.tool("vision_get_security_posture")
 async def get_security_posture() -> str:
     """Return effective security settings and status."""
     from utils.config import DISABLE_SANDBOX, STRICT_MODEL_CHECK
@@ -256,12 +252,12 @@ async def get_security_posture() -> str:
         "security_metrics_enabled": True
     })
 
-@mcp.tool()
+@mcp.tool("vision_get_status")
 async def get_rollout_status() -> str:
     """Return current rollout/compatibility mode status."""
     return success_response(data={"mode": "modern", "async_enabled": True})
 
-@mcp.tool()
+@mcp.tool("vision_get_policy")
 async def get_access_policy_status() -> str:
     """Return current tool access policy status."""
     return success_response(data={"policy": "open", "restrictions": []})
